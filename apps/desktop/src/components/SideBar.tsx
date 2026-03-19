@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import type { CSSProperties } from "react";
 import { FileListItem } from "./FileListItem";
 import "./SideBar.css";
@@ -155,6 +155,10 @@ export function SideBar({
 }: SideBarProps) {
   const [fileViewMode, setFileViewMode] = useState<FileViewMode>("flat");
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [showViewMenu, setShowViewMenu] = useState(false);
+  const viewMenuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const viewMenuRef = useRef<HTMLDivElement | null>(null);
+  const viewMenuFirstItemRef = useRef<HTMLButtonElement | null>(null);
 
   const statusCounts = useMemo(() => {
     const counts = { add: 0, mod: 0, del: 0 };
@@ -185,6 +189,40 @@ export function SideBar({
     collectDirs(tree);
     setExpandedPaths(allDirs);
   }, [files]);
+
+  useEffect(() => {
+    if (!showViewMenu) return;
+
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (viewMenuRef.current?.contains(target)) return;
+      if (viewMenuButtonRef.current?.contains(target)) return;
+      setShowViewMenu(false);
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setShowViewMenu(false);
+      viewMenuButtonRef.current?.focus();
+    };
+
+    document.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("keydown", onKeyDown);
+    requestAnimationFrame(() => viewMenuFirstItemRef.current?.focus());
+
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [showViewMenu]);
+
+  function selectFileViewMode(next: FileViewMode): void {
+    setFileViewMode(next);
+    setShowViewMenu(false);
+    viewMenuButtonRef.current?.focus();
+  }
 
   const toggleDir = (path: string) => {
     setExpandedPaths((prev) => {
@@ -275,36 +313,66 @@ export function SideBar({
               <span className="stat-del">-{statusCounts.del}</span>
             </>
           )}
-          {/* View toggle */}
-          <div className="sb-view-toggle">
+          <div className="sb-view-menu-wrap">
             <button
-              className={`view-btn ${fileViewMode === "flat" ? "active" : ""}`}
-              onClick={() => setFileViewMode("flat")}
-              title="列表视图"
+              ref={viewMenuButtonRef}
+              type="button"
+              className={showViewMenu ? "sb-view-menu-button active" : "sb-view-menu-button"}
+              aria-haspopup="menu"
+              aria-expanded={showViewMenu}
+              title="查看方式"
+              onClick={() => setShowViewMenu((prev) => !prev)}
             >
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-                <rect x="1" y="2" width="14" height="3" rx="1" fill="currentColor" opacity="0.8"/>
-                <rect x="1" y="6.5" width="14" height="3" rx="1" fill="currentColor" opacity="0.8"/>
-                <rect x="1" y="11" width="14" height="3" rx="1" fill="currentColor" opacity="0.8"/>
-              </svg>
+              {fileViewMode === "flat" ? (
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <rect x="1" y="2" width="14" height="3" rx="1" fill="currentColor" opacity="0.8" />
+                  <rect x="1" y="6.5" width="14" height="3" rx="1" fill="currentColor" opacity="0.8" />
+                  <rect x="1" y="11" width="14" height="3" rx="1" fill="currentColor" opacity="0.8" />
+                </svg>
+              ) : (
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <circle cx="3" cy="3" r="1.5" fill="currentColor" />
+                  <circle cx="3" cy="8" r="1.5" fill="currentColor" />
+                  <circle cx="3" cy="13" r="1.5" fill="currentColor" />
+                  <line x1="5" y1="3" x2="9" y2="3" stroke="currentColor" strokeWidth="1.5" />
+                  <line x1="5" y1="8" x2="9" y2="8" stroke="currentColor" strokeWidth="1.5" />
+                  <line x1="5" y1="13" x2="9" y2="13" stroke="currentColor" strokeWidth="1.5" />
+                  <rect x="9" y="1" width="6" height="4" rx="1" fill="currentColor" opacity="0.6" />
+                  <rect x="9" y="6" width="6" height="4" rx="1" fill="currentColor" opacity="0.6" />
+                  <rect x="9" y="11" width="6" height="4" rx="1" fill="currentColor" opacity="0.6" />
+                </svg>
+              )}
             </button>
-            <button
-              className={`view-btn ${fileViewMode === "tree" ? "active" : ""}`}
-              onClick={() => setFileViewMode("tree")}
-              title="树形视图"
-            >
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-                <circle cx="3" cy="3" r="1.5" fill="currentColor"/>
-                <circle cx="3" cy="8" r="1.5" fill="currentColor"/>
-                <circle cx="3" cy="13" r="1.5" fill="currentColor"/>
-                <line x1="5" y1="3" x2="9" y2="3" stroke="currentColor" strokeWidth="1.5"/>
-                <line x1="5" y1="8" x2="9" y2="8" stroke="currentColor" strokeWidth="1.5"/>
-                <line x1="5" y1="13" x2="9" y2="13" stroke="currentColor" strokeWidth="1.5"/>
-                <rect x="9" y="1" width="6" height="4" rx="1" fill="currentColor" opacity="0.6"/>
-                <rect x="9" y="6" width="6" height="4" rx="1" fill="currentColor" opacity="0.6"/>
-                <rect x="9" y="11" width="6" height="4" rx="1" fill="currentColor" opacity="0.6"/>
-              </svg>
-            </button>
+
+            {showViewMenu && (
+              <div ref={viewMenuRef} className="sb-view-menu" role="menu" aria-label="查看方式">
+                <button
+                  ref={viewMenuFirstItemRef}
+                  type="button"
+                  className={fileViewMode === "flat" ? "sb-view-menu-item checked" : "sb-view-menu-item"}
+                  role="menuitemradio"
+                  aria-checked={fileViewMode === "flat"}
+                  onClick={() => selectFileViewMode("flat")}
+                >
+                  <span className="sb-view-menu-label">以列表形式查看</span>
+                  <span className="sb-view-menu-check" aria-hidden="true">
+                    ✓
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={fileViewMode === "tree" ? "sb-view-menu-item checked" : "sb-view-menu-item"}
+                  role="menuitemradio"
+                  aria-checked={fileViewMode === "tree"}
+                  onClick={() => selectFileViewMode("tree")}
+                >
+                  <span className="sb-view-menu-label">以树形式查看</span>
+                  <span className="sb-view-menu-check" aria-hidden="true">
+                    ✓
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
         <div className="sb-panel-content">

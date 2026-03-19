@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./FixSheet.css";
+import { formatInvokeError } from "../lib/formatInvokeError";
 
 type FixStatus = "idle" | "loading" | "success" | "error";
 
@@ -34,6 +35,7 @@ export function FixSheet({
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [copiedError, setCopiedError] = useState(false);
 
   async function handleSend() {
     if (!prompt.trim()) return;
@@ -58,7 +60,7 @@ export function FixSheet({
       setTruncated(response.truncated);
       setStatus("success");
     } catch (err) {
-      setError(String(err));
+      setError(formatInvokeError(err));
       setStatus("error");
     }
   }
@@ -67,6 +69,14 @@ export function FixSheet({
     navigator.clipboard.writeText(suggestion).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  function handleCopyError() {
+    if (!error.trim()) return;
+    navigator.clipboard.writeText(error).then(() => {
+      setCopiedError(true);
+      setTimeout(() => setCopiedError(false), 2000);
     });
   }
 
@@ -137,10 +147,13 @@ export function FixSheet({
         {status === "error" && (
           <div className="fix-response">
             <div className="fix-error">
-              <p className="fix-error-msg">{error}</p>
+              <pre className="fix-error-msg">{error}</pre>
               <div className="fix-response-actions">
                 <button type="button" className="ghost" onClick={handleRetry}>
                   重试
+                </button>
+                <button type="button" className="ghost" onClick={handleCopyError}>
+                  {copiedError ? "已复制 ✓" : "复制错误详情"}
                 </button>
               </div>
             </div>

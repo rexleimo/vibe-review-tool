@@ -1,20 +1,22 @@
 .mode-pill {
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-pill);
-  padding: 0;
   display: flex;
-  gap: 2px;
+  background: var(--bg-quaternary);
+  padding: 2px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  height: 28px;
+  align-items: center;
 }
 
 .mode-pill-btn {
   border: none;
   background: transparent;
-  color: var(--text-secondary);
-  padding: 6px 10px;
+  padding: 0 10px;
+  height: 22px;
   font-size: 11px;
   font-weight: 600;
-  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  border-radius: calc(var(--radius-md) - 2px);
   cursor: pointer;
   transition: all var(--transition);
 }
@@ -24,6 +26,7 @@
 }
 
 .mode-pill-btn.active {
-  background: rgba(255, 255, 255, 0.08);
-  color: #dff1ff;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }

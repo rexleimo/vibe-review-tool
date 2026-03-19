@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test:review-items": "rm -rf .tmp-tests && tsc -p tsconfig.test.json && node --test tests/reviewItems.test.mjs && rm -rf .tmp-tests",
     "preview": "vite preview",
     "tauri": "tauri"
   },

@@ -1,8 +1,12 @@
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::Stdio;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -37,6 +41,22 @@ const MENU_WINDOW_BRING_ALL_TO_FRONT: &str = "window.bring_all_to_front";
 const MENU_HELP_WELCOME: &str = "help.welcome";
 const MENU_HELP_SHORTCUTS: &str = "help.shortcuts";
 const MENU_APP_SETTINGS: &str = "app.settings";
+
+const PROVIDER_COMMAND_TIMEOUT: Duration = Duration::from_secs(90);
+
+fn describe_command(cmd: &Command) -> String {
+    let program = cmd.get_program().to_string_lossy().to_string();
+    let args = cmd
+        .get_args()
+        .map(|arg| arg.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if args.is_empty() {
+        program
+    } else {
+        format!("{program} {args}")
+    }
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -171,8 +191,6 @@ struct GenerateSummaryResponse {
 #[serde(rename_all = "camelCase")]
 struct SuggestFixRequest {
     repo: String,
-    mode: String,
-    commit_sha: Option<String>,
     file_path: String,
     file_old_content: String,
     file_new_content: String,
@@ -184,6 +202,106 @@ struct SuggestFixRequest {
 struct SuggestFixResponse {
     suggestion: String,
     truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum ReviewItemScope {
+    File,
+    Range,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApplyReviewItemRequest {
+    repo: String,
+    provider: AiProvider,
+    context_mode: String,
+    workspace_mode: Option<WorkspaceMode>,
+    commit_sha: Option<String>,
+    item_id: String,
+    file_path: String,
+    scope_type: ReviewItemScope,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+    title: String,
+    note: String,
+    file_old_content: String,
+    file_new_content: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ApplyReviewItemResponse {
+    provider: AiProvider,
+    provider_label: String,
+    summary: String,
+    changed_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum BatchAiProvider {
+    Codex,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ReviewBatchIssueSnapshot {
+    id: String,
+    title: String,
+    note: String,
+    file_path: String,
+    scope_type: ReviewItemScope,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApplyReviewBatchRequest {
+    repo: String,
+    provider: BatchAiProvider,
+    context_id: String,
+    context_mode: String,
+    workspace_mode: Option<WorkspaceMode>,
+    commit_sha: Option<String>,
+    batch_run_id: String,
+    issue_ids: Vec<String>,
+    issue_snapshots: Vec<ReviewBatchIssueSnapshot>,
+    brief_text: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ApplyReviewBatchCommandResponse {
+    ok: bool,
+    provider: Option<AiProvider>,
+    provider_label: Option<String>,
+    summary: Option<String>,
+    changed_files: Option<Vec<String>>,
+    error_code: Option<String>,
+    message: Option<String>,
+    retryable: Option<bool>,
+    provider_stderr: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ApplyReviewBatchBackendFailure {
+    error_code: &'static str,
+    message: String,
+    retryable: bool,
+    provider_stderr: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReviewRunLockError {
+    AlreadyRunning,
+}
+
+struct ActiveReviewRunGuard {
+    key: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -204,48 +322,53 @@ fn get_ai_provider_statuses() -> Result<Vec<AiProviderStatus>, String> {
 }
 
 #[tauri::command]
-fn generate_review_summary(req: GenerateSummaryRequest) -> Result<GenerateSummaryResponse, String> {
-    let repo = normalize_repo(&req.repo);
-    ensure_git_repo(&repo)?;
+async fn generate_review_summary(req: GenerateSummaryRequest) -> Result<GenerateSummaryResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let repo = normalize_repo(&req.repo);
+        ensure_git_repo(&repo)?;
 
-    let (prompt, truncated) = build_summary_prompt(&repo, &req)?;
-    let provider = req.provider;
-    let summary = run_provider_summary(provider, &repo, &prompt)?;
+        let (prompt, truncated) = build_summary_prompt(&repo, &req)?;
+        let provider = req.provider;
+        let summary = run_provider_summary(provider, &repo, &prompt)?;
 
-    if summary.trim().is_empty() {
-        return Err(format!("{} returned empty output", provider_label(provider)));
-    }
+        if summary.trim().is_empty() {
+            return Err(format!("{} returned empty output", provider_label(provider)));
+        }
 
-    Ok(GenerateSummaryResponse {
-        provider,
-        provider_label: provider_label(provider).to_string(),
-        summary,
-        truncated,
+        Ok(GenerateSummaryResponse {
+            provider,
+            provider_label: provider_label(provider).to_string(),
+            summary,
+            truncated,
+        })
     })
+    .await
+    .map_err(|err| format!("failed to run summary in background: {err}"))?
 }
 
 #[tauri::command]
-fn suggest_fix(req: SuggestFixRequest) -> Result<SuggestFixResponse, String> {
-    let repo = normalize_repo(&req.repo);
-    ensure_git_repo(&repo)?;
+async fn suggest_fix(req: SuggestFixRequest) -> Result<SuggestFixResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let repo = normalize_repo(&req.repo);
+        ensure_git_repo(&repo)?;
 
-    const MAX_DIFF_CHARS: usize = 15_000;
+        const MAX_DIFF_CHARS: usize = 15_000;
 
-    let diff_content = format!(
-        "--- OLD ---\n{}\n--- NEW ---\n{}",
-        req.file_old_content,
-        req.file_new_content
-    );
+        let diff_content = format!(
+            "--- OLD ---\n{}\n--- NEW ---\n{}",
+            req.file_old_content,
+            req.file_new_content
+        );
 
-    let truncated = diff_content.len() > MAX_DIFF_CHARS;
-    let diff_for_prompt = if truncated {
-        &diff_content[..MAX_DIFF_CHARS]
-    } else {
-        &diff_content
-    };
+        let truncated = diff_content.len() > MAX_DIFF_CHARS;
+        let diff_for_prompt = if truncated {
+            &diff_content[..MAX_DIFF_CHARS]
+        } else {
+            &diff_content
+        };
 
-    let prompt = format!(
-        "You are an expert code reviewer. Based on the following file diff and the user's fix request, provide a detailed fix suggestion.\n\
+        let prompt = format!(
+            "You are an expert code reviewer. Based on the following file diff and the user's fix request, provide a detailed fix suggestion.\n\
 \n\
          File: {}\n\
 \n\
@@ -257,50 +380,225 @@ fn suggest_fix(req: SuggestFixRequest) -> Result<SuggestFixResponse, String> {
          1. Problem Analysis — what is wrong\n\
          2. Suggested Fix — concrete code changes or approach\n\
          3. Alternative Approach — if applicable",
-        req.file_path,
-        diff_for_prompt,
-        req.prompt
-    );
+            req.file_path,
+            diff_for_prompt,
+            req.prompt
+        );
 
-    let executable = resolve_provider_command(AiProvider::Codex)
-        .ok_or_else(|| "Codex CLI is unavailable. Please install it first.".to_string())?;
+        let executable = resolve_provider_command(AiProvider::Codex)
+            .ok_or_else(|| "Codex CLI is unavailable. Please install it first.".to_string())?;
 
-    let temp_path = std::env::temp_dir().join(format!(
-        "review-editor-fix-{}.txt",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    ));
+        let temp_path = std::env::temp_dir().join(format!(
+            "review-editor-fix-{}.txt",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        ));
 
-    let output = Command::new(executable)
-        .arg("exec")
-        .arg("-C")
-        .arg(&repo)
-        .arg("--skip-git-repo-check")
-        .arg("-o")
-        .arg(&temp_path)
-        .arg(&prompt)
-        .env("PATH", get_full_path())
-        .output()
-        .map_err(|e| format!("failed to run Codex CLI: {e}"))?;
+        let mut cmd = Command::new(executable);
+        cmd.arg("exec")
+            .arg("-C")
+            .arg(&repo)
+            .arg("--skip-git-repo-check")
+            .arg("-o")
+            .arg(&temp_path)
+            .arg(&prompt)
+            .env("PATH", get_full_path());
 
-    let suggestion = fs::read_to_string(&temp_path).unwrap_or_default();
-    let _ = fs::remove_file(&temp_path);
+        let output = run_command_with_timeout(cmd, PROVIDER_COMMAND_TIMEOUT)
+            .map_err(|e| format!("failed to run Codex CLI: {e}"))?;
 
-    if output.status.success() && !suggestion.trim().is_empty() {
-        Ok(SuggestFixResponse {
-            suggestion: suggestion.trim().to_string(),
-            truncated,
-        })
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(if stderr.trim().is_empty() {
-            "Codex CLI did not produce a suggestion".to_string()
+        let suggestion = fs::read_to_string(&temp_path).unwrap_or_default();
+        let _ = fs::remove_file(&temp_path);
+
+        if output.status.success() && !suggestion.trim().is_empty() {
+            Ok(SuggestFixResponse {
+                suggestion: suggestion.trim().to_string(),
+                truncated,
+            })
         } else {
-            stderr.trim().to_string()
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(if stderr.trim().is_empty() {
+                "Codex CLI did not produce a suggestion".to_string()
+            } else {
+                stderr.trim().to_string()
+            })
+        }
+    })
+    .await
+    .map_err(|err| format!("failed to run fix in background: {err}"))?
+}
+
+#[tauri::command]
+async fn apply_review_item(req: ApplyReviewItemRequest) -> Result<ApplyReviewItemResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let repo = normalize_repo(&req.repo);
+        ensure_git_repo(&repo)?;
+        let context_id = build_review_context_id(
+            &req.repo,
+            &req.context_mode,
+            req.workspace_mode,
+            req.commit_sha.as_deref(),
+        );
+        let _guard = ActiveReviewRunGuard::acquire(review_run_scope_key(&req.repo, &context_id))
+            .map_err(|_| "Another AI editing run is already active for this review context".to_string())?;
+
+        let before_snapshot = snapshot_workspace_state(&repo)?;
+        let summary = run_provider_edit(req.provider, &repo, &build_review_item_prompt(&req))?;
+        let after_snapshot = snapshot_workspace_state(&repo)?;
+        let mut changed_files = diff_workspace_snapshots(&before_snapshot, &after_snapshot);
+
+        if changed_files.is_empty() && after_snapshot.contains_key(&req.file_path) {
+            changed_files.push(req.file_path.clone());
+        }
+
+        Ok(ApplyReviewItemResponse {
+            provider: req.provider,
+            provider_label: provider_label(req.provider).to_string(),
+            summary,
+            changed_files,
         })
+    })
+    .await
+    .map_err(|err| format!("failed to apply review item in background: {err}"))?
+}
+
+#[tauri::command]
+async fn apply_review_batch(req: ApplyReviewBatchRequest) -> Result<ApplyReviewBatchCommandResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(err) = validate_review_batch_payload(&req) {
+            return Ok(failure_response(err));
+        }
+        if let Err(err) = validate_review_batch_brief_size(&req.brief_text) {
+            return Ok(failure_response(err));
+        }
+
+        let repo = normalize_repo(&req.repo);
+        ensure_git_repo(&repo)?;
+
+        let _guard = match ActiveReviewRunGuard::acquire(review_run_scope_key(&req.repo, &req.context_id)) {
+            Ok(guard) => guard,
+            Err(err) => return Ok(failure_response(map_lock_error_for_batch(err))),
+        };
+
+        let before_snapshot = snapshot_workspace_state(&repo)?;
+        let prompt = build_review_batch_prompt(&req.brief_text);
+        let summary = match req.provider {
+            BatchAiProvider::Codex => match run_provider_edit(AiProvider::Codex, &repo, &prompt) {
+                Ok(summary) => summary,
+                Err(message) => return Ok(failure_response(classify_provider_failure(&message, &message))),
+            },
+        };
+        let after_snapshot = snapshot_workspace_state(&repo)?;
+        let changed_files = normalize_changed_files(&repo, diff_workspace_snapshots(&before_snapshot, &after_snapshot));
+
+        Ok(success_response(summary, changed_files))
+    })
+    .await
+    .map_err(|err| format!("failed to apply review batch in background: {err}"))?
+}
+
+static ACTIVE_REVIEW_RUNS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn active_review_runs() -> &'static Mutex<HashSet<String>> {
+    ACTIVE_REVIEW_RUNS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+impl ActiveReviewRunGuard {
+    fn acquire(key: String) -> Result<Self, ReviewRunLockError> {
+        let mut active = active_review_runs().lock().expect("active review run mutex poisoned");
+        if active.contains(&key) {
+            return Err(ReviewRunLockError::AlreadyRunning);
+        }
+        active.insert(key.clone());
+        Ok(Self { key })
     }
+}
+
+impl Drop for ActiveReviewRunGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active) = active_review_runs().lock() {
+            active.remove(&self.key);
+        }
+    }
+}
+
+fn run_command_with_timeout(mut cmd: Command, timeout: Duration) -> Result<std::process::Output, String> {
+    let description = describe_command(&cmd);
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| err.to_string())?;
+
+    let started = SystemTime::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+                if let Some(mut out) = child.stdout.take() {
+                    use std::io::Read;
+                    let _ = out.read_to_end(&mut stdout);
+                }
+                if let Some(mut err) = child.stderr.take() {
+                    use std::io::Read;
+                    let _ = err.read_to_end(&mut stderr);
+                }
+                return Ok(std::process::Output { status, stdout, stderr });
+            }
+            Ok(None) => {}
+            Err(err) => return Err(err.to_string()),
+        }
+
+        let elapsed = started.elapsed().unwrap_or_default();
+        if elapsed >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "timed out after {}s\ncommand: {}",
+                timeout.as_secs(),
+                description
+            ));
+        }
+
+        std::thread::sleep(Duration::from_millis(80));
+    }
+}
+
+fn normalize_repo_string(repo: &str) -> String {
+    let trimmed = repo.trim().replace('\\', "/");
+    let without_trailing = trimmed.trim_end_matches('/');
+    if without_trailing.is_empty() {
+        ".".to_string()
+    } else {
+        without_trailing.to_string()
+    }
+}
+
+fn build_review_context_id(
+    repo: &str,
+    context_mode: &str,
+    workspace_mode: Option<WorkspaceMode>,
+    commit_sha: Option<&str>,
+) -> String {
+    let normalized_repo = normalize_repo_string(repo);
+    if context_mode == "commit" {
+        return format!("{}::commit::{}", normalized_repo, commit_sha.unwrap_or("unknown"));
+    }
+
+    let workspace_label = match workspace_mode.unwrap_or(WorkspaceMode::All) {
+        WorkspaceMode::All => "all",
+        WorkspaceMode::Staged => "staged",
+        WorkspaceMode::Unstaged => "unstaged",
+    };
+    format!("{}::workspace::{}", normalized_repo, workspace_label)
+}
+
+fn review_run_scope_key(repo: &str, context_id: &str) -> String {
+    format!("{}::{}", normalize_repo_string(repo), context_id)
 }
 
 #[tauri::command]
@@ -1022,6 +1320,329 @@ fn render_diff_block(diff: &FileDiffResponse) -> String {
     )
 }
 
+fn build_review_item_prompt(req: &ApplyReviewItemRequest) -> String {
+    const MAX_FILE_CONTEXT_CHARS: usize = 20_000;
+    const RANGE_CONTEXT_PADDING: usize = 12;
+
+    let mut prompt = String::from(
+        "You are working inside a local git repository for a desktop code review tool.\n\
+         This task comes from a structured review item.\n\
+         Modify the workspace directly to address the review item.\n\
+         Do not revert unrelated user changes.\n\
+         Keep the edit scope as tight as possible, but you may touch other files when necessary.\n\
+         When finished, respond in plain text with these sections only:\n\
+         Summary\n\
+         Tests\n\
+         Notes\n\n",
+    );
+
+    prompt.push_str(&format!(
+        "Repository: {}\nReview item id: {}\nFile: {}\nTitle: {}\n",
+        req.repo, req.item_id, req.file_path, req.title
+    ));
+
+    if req.note.trim().is_empty() {
+        prompt.push_str("Reviewer note: (none)\n");
+    } else {
+        prompt.push_str(&format!("Reviewer note: {}\n", req.note.trim()));
+    }
+
+    match req.context_mode.as_str() {
+        "commit" => {
+            if let Some(commit_sha) = req.commit_sha.as_deref() {
+                prompt.push_str(&format!("Commit under review: {commit_sha}\n"));
+            }
+        }
+        "workspace" => {
+            if let Some(workspace_mode) = req.workspace_mode {
+                prompt.push_str(&format!("Workspace review mode: {:?}\n", workspace_mode));
+            }
+        }
+        _ => {}
+    }
+
+    match req.scope_type {
+        ReviewItemScope::File => {
+            prompt.push_str("Scope: Whole file\n\n");
+            let (old_context, old_truncated) =
+                truncate_text(&req.file_old_content, MAX_FILE_CONTEXT_CHARS);
+            let (new_context, new_truncated) =
+                truncate_text(&req.file_new_content, MAX_FILE_CONTEXT_CHARS);
+            prompt.push_str("--- OLD FILE ---\n");
+            prompt.push_str(&old_context);
+            prompt.push_str("\n--- NEW FILE ---\n");
+            prompt.push_str(&new_context);
+            if old_truncated || new_truncated {
+                prompt.push_str("\n\nNote: File context was truncated before sending to the AI client.\n");
+            }
+        }
+        ReviewItemScope::Range => {
+            let start_line = req.start_line.unwrap_or(1);
+            let end_line = req.end_line.unwrap_or(start_line);
+            prompt.push_str(&format!("Scope: Range\nLines: {start_line}-{end_line}\n\n"));
+            prompt.push_str("--- ORIGINAL CONTEXT ---\n");
+            prompt.push_str(&render_line_window(
+                &req.file_old_content,
+                start_line,
+                end_line,
+                RANGE_CONTEXT_PADDING,
+            ));
+            prompt.push_str("\n--- MODIFIED CONTEXT ---\n");
+            prompt.push_str(&render_line_window(
+                &req.file_new_content,
+                start_line,
+                end_line,
+                RANGE_CONTEXT_PADDING,
+            ));
+            prompt.push_str(
+                "\n\nIf the provided line range shifted, inspect the file directly before editing.\n",
+            );
+        }
+    }
+
+    prompt
+}
+
+fn build_review_batch_prompt(brief_text: &str) -> String {
+    format!(
+        "You are working inside a local git repository for a desktop code review tool.\n\
+         This task comes from a structured batch review packet.\n\
+         Modify the workspace directly to address the listed issues.\n\
+         Do not revert unrelated user changes.\n\
+         Keep the edits focused on the requested review items.\n\
+         When finished, respond in plain text with these sections only:\n\
+         Summary\n\
+         Tests\n\
+         Notes\n\n\
+         {}\n",
+        brief_text.trim()
+    )
+}
+
+fn validate_review_batch_payload(req: &ApplyReviewBatchRequest) -> Result<(), ApplyReviewBatchBackendFailure> {
+    if req.issue_ids.is_empty() || req.issue_snapshots.is_empty() {
+        return Err(ApplyReviewBatchBackendFailure {
+            error_code: "empty_selection",
+            message: "Batch send requires at least one open issue".to_string(),
+            retryable: false,
+            provider_stderr: None,
+        });
+    }
+
+    if req.issue_ids.len() != req.issue_snapshots.len() {
+        return Err(ApplyReviewBatchBackendFailure {
+            error_code: "invalid_payload",
+            message: "issueIds and issueSnapshots must have the same length".to_string(),
+            retryable: false,
+            provider_stderr: None,
+        });
+    }
+
+    for (issue_id, snapshot) in req.issue_ids.iter().zip(req.issue_snapshots.iter()) {
+        if issue_id != &snapshot.id {
+            return Err(ApplyReviewBatchBackendFailure {
+                error_code: "invalid_payload",
+                message: "issueIds must match issueSnapshots by index".to_string(),
+                retryable: false,
+                provider_stderr: None,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_review_batch_brief_size(brief_text: &str) -> Result<(), ApplyReviewBatchBackendFailure> {
+    if brief_text.len() <= 24_000 {
+        return Ok(());
+    }
+
+    Err(ApplyReviewBatchBackendFailure {
+        error_code: "brief_too_large",
+        message: "Batch brief exceeds the 24,000-byte limit".to_string(),
+        retryable: true,
+        provider_stderr: None,
+    })
+}
+
+fn normalize_changed_files(repo: &Path, changed_files: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::new();
+    let mut seen = HashSet::new();
+
+    for changed_file in changed_files {
+        let normalized_path = if Path::new(&changed_file).is_absolute() {
+            let absolute = PathBuf::from(&changed_file);
+            absolute
+                .strip_prefix(repo)
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| changed_file.replace('\\', "/"))
+        } else {
+            changed_file.replace('\\', "/")
+        };
+
+        if seen.insert(normalized_path.clone()) {
+            normalized.push(normalized_path);
+        }
+    }
+
+    normalized
+}
+
+fn classify_provider_failure(message: &str, stderr: &str) -> ApplyReviewBatchBackendFailure {
+    let lower_message = message.to_lowercase();
+    let lower_stderr = stderr.to_lowercase();
+    let provider_stderr = if stderr.trim().is_empty() {
+        None
+    } else {
+        Some(stderr.trim().to_string())
+    };
+
+    if lower_message.contains("unavailable")
+        || lower_message.contains("not found")
+        || lower_stderr.contains("unavailable")
+        || lower_stderr.contains("not found")
+    {
+        return ApplyReviewBatchBackendFailure {
+            error_code: "provider_unavailable",
+            message: message.to_string(),
+            retryable: true,
+            provider_stderr,
+        };
+    }
+
+    if lower_message.contains("context")
+        || lower_message.contains("token")
+        || lower_message.contains("window")
+        || lower_stderr.contains("context")
+        || lower_stderr.contains("token")
+        || lower_stderr.contains("window")
+    {
+        return ApplyReviewBatchBackendFailure {
+            error_code: "provider_context_limit",
+            message: message.to_string(),
+            retryable: true,
+            provider_stderr,
+        };
+    }
+
+    ApplyReviewBatchBackendFailure {
+        error_code: "provider_execution_failed",
+        message: message.to_string(),
+        retryable: true,
+        provider_stderr,
+    }
+}
+
+fn map_lock_error_for_batch(_error: ReviewRunLockError) -> ApplyReviewBatchBackendFailure {
+    ApplyReviewBatchBackendFailure {
+        error_code: "batch_already_running",
+        message: "Another AI editing run is already active for this review context".to_string(),
+        retryable: true,
+        provider_stderr: None,
+    }
+}
+
+fn success_response(summary: String, changed_files: Vec<String>) -> ApplyReviewBatchCommandResponse {
+    ApplyReviewBatchCommandResponse {
+        ok: true,
+        provider: Some(AiProvider::Codex),
+        provider_label: Some(provider_label(AiProvider::Codex).to_string()),
+        summary: Some(summary),
+        changed_files: Some(changed_files),
+        error_code: None,
+        message: None,
+        retryable: None,
+        provider_stderr: None,
+    }
+}
+
+fn failure_response(error: ApplyReviewBatchBackendFailure) -> ApplyReviewBatchCommandResponse {
+    ApplyReviewBatchCommandResponse {
+        ok: false,
+        provider: None,
+        provider_label: None,
+        summary: None,
+        changed_files: None,
+        error_code: Some(error.error_code.to_string()),
+        message: Some(error.message),
+        retryable: Some(error.retryable),
+        provider_stderr: error.provider_stderr,
+    }
+}
+
+fn truncate_text(value: &str, max_chars: usize) -> (String, bool) {
+    let mut chars = value.chars();
+    let truncated = value.chars().count() > max_chars;
+    let collected = chars.by_ref().take(max_chars).collect::<String>();
+    (collected, truncated)
+}
+
+fn render_line_window(content: &str, start_line: usize, end_line: usize, padding: usize) -> String {
+    let lines = content.lines().collect::<Vec<_>>();
+    if lines.is_empty() {
+        return "(no text context available)".to_string();
+    }
+
+    let start = start_line.saturating_sub(padding).max(1);
+    let end = end_line.saturating_add(padding).min(lines.len());
+
+    (start..=end)
+        .filter_map(|line_number| {
+            lines.get(line_number - 1).map(|line| format!("{line_number:>4}: {line}"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn snapshot_workspace_state(repo: &Path) -> Result<HashMap<String, u64>, String> {
+    let files = workspace_files_from_status(repo, WorkspaceMode::All)?;
+    let mut snapshot = HashMap::new();
+
+    for file in files {
+        snapshot.insert(file.path.clone(), fingerprint_worktree_file(repo, &file.path)?);
+    }
+
+    Ok(snapshot)
+}
+
+fn fingerprint_worktree_file(repo: &Path, path: &str) -> Result<u64, String> {
+    let mut hasher = DefaultHasher::new();
+    path.hash(&mut hasher);
+
+    let full_path = repo.join(path);
+    if full_path.is_file() {
+        let bytes = fs::read(&full_path)
+            .map_err(|err| format!("failed to read workspace file '{}': {err}", full_path.display()))?;
+        bytes.hash(&mut hasher);
+    } else {
+        "missing".hash(&mut hasher);
+    }
+
+    Ok(hasher.finish())
+}
+
+fn diff_workspace_snapshots(
+    before: &HashMap<String, u64>,
+    after: &HashMap<String, u64>,
+) -> Vec<String> {
+    let mut keys = BTreeSet::new();
+    keys.extend(before.keys().cloned());
+    keys.extend(after.keys().cloned());
+
+    keys.into_iter()
+        .filter(|path| before.get(path) != after.get(path))
+        .collect()
+}
+
+fn run_provider_edit(provider: AiProvider, repo: &Path, prompt: &str) -> Result<String, String> {
+    match provider {
+        AiProvider::Codex => run_codex_edit(repo, prompt),
+        AiProvider::Claude => run_claude_edit(repo, prompt),
+        AiProvider::Gemini => run_gemini_edit(repo, prompt),
+        AiProvider::Opencode => run_opencode_edit(repo, prompt),
+    }
+}
+
 fn run_provider_summary(provider: AiProvider, repo: &Path, prompt: &str) -> Result<String, String> {
     match provider {
         AiProvider::Codex => run_codex_summary(repo, prompt),
@@ -1042,16 +1663,16 @@ fn run_codex_summary(repo: &Path, prompt: &str) -> Result<String, String> {
             .unwrap_or(0)
     ));
 
-    let output = Command::new(executable)
-        .arg("exec")
+    let mut cmd = Command::new(executable);
+    cmd.arg("exec")
         .arg("-C")
         .arg(repo)
         .arg("--skip-git-repo-check")
         .arg("-o")
         .arg(&temp_path)
         .arg(prompt)
-        .env("PATH", get_full_path())
-        .output()
+        .env("PATH", get_full_path());
+    let output = run_command_with_timeout(cmd, PROVIDER_COMMAND_TIMEOUT)
         .map_err(|err| format!("failed to run Codex CLI: {err}"))?;
 
     let summary = fs::read_to_string(&temp_path).unwrap_or_default();
@@ -1069,19 +1690,80 @@ fn run_codex_summary(repo: &Path, prompt: &str) -> Result<String, String> {
     }
 }
 
+fn run_codex_edit(repo: &Path, prompt: &str) -> Result<String, String> {
+    let executable = resolve_provider_command(AiProvider::Codex)
+        .ok_or_else(|| "Codex CLI is unavailable in this app environment".to_string())?;
+    let temp_path = std::env::temp_dir().join(format!(
+        "review-editor-codex-edit-{}.txt",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or(0)
+    ));
+
+    let mut cmd = Command::new(executable);
+    cmd.arg("exec")
+        .arg("-C")
+        .arg(repo)
+        .arg("--skip-git-repo-check")
+        .arg("--dangerously-bypass-approvals-and-sandbox")
+        .arg("-o")
+        .arg(&temp_path)
+        .arg(prompt)
+        .env("PATH", get_full_path());
+    let output = run_command_with_timeout(cmd, PROVIDER_COMMAND_TIMEOUT)
+        .map_err(|err| format!("failed to run Codex CLI: {err}"))?;
+
+    let summary = fs::read_to_string(&temp_path).unwrap_or_default();
+    let _ = fs::remove_file(&temp_path);
+
+    if output.status.success() {
+        let cleaned = strip_ansi_codes(summary.trim());
+        if cleaned.is_empty() {
+            Ok("Summary\nUpdated the workspace.\nTests\nNot run.\nNotes\nNo final message returned.".to_string())
+        } else {
+            Ok(cleaned)
+        }
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(if stderr.trim().is_empty() {
+            "Codex CLI exited with failure".to_string()
+        } else {
+            strip_ansi_codes(stderr.trim())
+        })
+    }
+}
+
 fn run_claude_summary(repo: &Path, prompt: &str) -> Result<String, String> {
     let executable = resolve_provider_command(AiProvider::Claude)
         .ok_or_else(|| "Claude Code is unavailable in this app environment".to_string())?;
-    let output = Command::new(executable)
-        .arg("-p")
+    let mut cmd = Command::new(executable);
+    cmd.arg("-p")
         .arg("--permission-mode")
         .arg("plan")
         .arg("--output-format")
         .arg("text")
         .arg(prompt)
         .current_dir(repo)
-        .env("PATH", get_full_path())
-        .output()
+        .env("PATH", get_full_path());
+    let output = run_command_with_timeout(cmd, PROVIDER_COMMAND_TIMEOUT)
+        .map_err(|err| format!("failed to run Claude Code: {err}"))?;
+    process_command_output(output, "Claude Code")
+}
+
+fn run_claude_edit(repo: &Path, prompt: &str) -> Result<String, String> {
+    let executable = resolve_provider_command(AiProvider::Claude)
+        .ok_or_else(|| "Claude Code is unavailable in this app environment".to_string())?;
+    let mut cmd = Command::new(executable);
+    cmd.arg("-p")
+        .arg("--permission-mode")
+        .arg("bypassPermissions")
+        .arg("--output-format")
+        .arg("text")
+        .arg(prompt)
+        .current_dir(repo)
+        .env("PATH", get_full_path());
+    let output = run_command_with_timeout(cmd, PROVIDER_COMMAND_TIMEOUT)
         .map_err(|err| format!("failed to run Claude Code: {err}"))?;
     process_command_output(output, "Claude Code")
 }
@@ -1089,16 +1771,35 @@ fn run_claude_summary(repo: &Path, prompt: &str) -> Result<String, String> {
 fn run_gemini_summary(repo: &Path, prompt: &str) -> Result<String, String> {
     let executable = resolve_provider_command(AiProvider::Gemini)
         .ok_or_else(|| "Gemini CLI is unavailable in this app environment".to_string())?;
-    let output = Command::new(executable)
-        .arg("-p")
+    let mut cmd = Command::new(executable);
+    cmd.arg("-p")
         .arg(prompt)
         .arg("-o")
         .arg("text")
         .arg("--approval-mode")
         .arg("plan")
         .current_dir(repo)
-        .env("PATH", get_full_path())
-        .output()
+        .env("PATH", get_full_path());
+    let output = run_command_with_timeout(cmd, PROVIDER_COMMAND_TIMEOUT)
+        .map_err(|err| format!("failed to run Gemini CLI: {err}"))?;
+    process_command_output(output, "Gemini CLI")
+}
+
+fn run_gemini_edit(repo: &Path, prompt: &str) -> Result<String, String> {
+    let executable = resolve_provider_command(AiProvider::Gemini)
+        .ok_or_else(|| "Gemini CLI is unavailable in this app environment".to_string())?;
+    let mut cmd = Command::new(executable);
+    cmd.arg("-p")
+        .arg(prompt)
+        .arg("-o")
+        .arg("text")
+        .arg("--approval-mode")
+        .arg("yolo")
+        .arg("--sandbox")
+        .arg("false")
+        .current_dir(repo)
+        .env("PATH", get_full_path());
+    let output = run_command_with_timeout(cmd, PROVIDER_COMMAND_TIMEOUT)
         .map_err(|err| format!("failed to run Gemini CLI: {err}"))?;
     process_command_output(output, "Gemini CLI")
 }
@@ -1106,13 +1807,27 @@ fn run_gemini_summary(repo: &Path, prompt: &str) -> Result<String, String> {
 fn run_opencode_summary(repo: &Path, prompt: &str) -> Result<String, String> {
     let executable = resolve_provider_command(AiProvider::Opencode)
         .ok_or_else(|| "OpenCode is unavailable in this app environment".to_string())?;
-    let output = Command::new(executable)
-        .arg("run")
+    let mut cmd = Command::new(executable);
+    cmd.arg("run")
         .arg("--dir")
         .arg(repo)
         .arg(prompt)
-        .env("PATH", get_full_path())
-        .output()
+        .env("PATH", get_full_path());
+    let output = run_command_with_timeout(cmd, PROVIDER_COMMAND_TIMEOUT)
+        .map_err(|err| format!("failed to run OpenCode: {err}"))?;
+    process_command_output(output, "OpenCode")
+}
+
+fn run_opencode_edit(repo: &Path, prompt: &str) -> Result<String, String> {
+    let executable = resolve_provider_command(AiProvider::Opencode)
+        .ok_or_else(|| "OpenCode is unavailable in this app environment".to_string())?;
+    let mut cmd = Command::new(executable);
+    cmd.arg("run")
+        .arg("--dir")
+        .arg(repo)
+        .arg(prompt)
+        .env("PATH", get_full_path());
+    let output = run_command_with_timeout(cmd, PROVIDER_COMMAND_TIMEOUT)
         .map_err(|err| format!("failed to run OpenCode: {err}"))?;
     process_command_output(output, "OpenCode")
 }
@@ -1291,6 +2006,8 @@ pub fn run() {
             get_ai_provider_statuses,
             generate_review_summary,
             suggest_fix,
+            apply_review_item,
+            apply_review_batch,
             get_commit_graph,
             get_commit_files,
             get_commit_file_diff,
@@ -1354,5 +2071,182 @@ mod tests {
         assert!(rendered.iter().any(|path| path.ends_with("/.bun/bin/codex")));
         assert!(rendered.iter().any(|path| path.ends_with("/.local/bin/codex")));
         assert!(rendered.iter().any(|path| path.ends_with("/opt/homebrew/bin/codex")));
+    }
+
+    #[test]
+    fn build_review_item_prompt_mentions_line_range_for_range_scope() {
+        let prompt = build_review_item_prompt(&ApplyReviewItemRequest {
+            repo: "/tmp/repo".to_string(),
+            provider: AiProvider::Codex,
+            context_mode: "commit".to_string(),
+            workspace_mode: None,
+            commit_sha: Some("abc123".to_string()),
+            item_id: "item-1".to_string(),
+            file_path: "src/app.tsx".to_string(),
+            scope_type: ReviewItemScope::Range,
+            start_line: Some(12),
+            end_line: Some(19),
+            title: "Handle empty state".to_string(),
+            note: "Avoid rendering blank output".to_string(),
+            file_old_content: "before".to_string(),
+            file_new_content: "after".to_string(),
+        });
+
+        assert!(prompt.contains("Lines: 12-19"));
+        assert!(prompt.contains("Commit under review: abc123"));
+        assert!(prompt.contains("Avoid rendering blank output"));
+    }
+
+    #[test]
+    fn build_review_item_prompt_uses_whole_file_label_for_file_scope() {
+        let prompt = build_review_item_prompt(&ApplyReviewItemRequest {
+            repo: "/tmp/repo".to_string(),
+            provider: AiProvider::Codex,
+            context_mode: "workspace".to_string(),
+            workspace_mode: Some(WorkspaceMode::All),
+            commit_sha: None,
+            item_id: "item-2".to_string(),
+            file_path: "src/app.tsx".to_string(),
+            scope_type: ReviewItemScope::File,
+            start_line: None,
+            end_line: None,
+            title: "Tighten submit flow".to_string(),
+            note: "".to_string(),
+            file_old_content: "before".to_string(),
+            file_new_content: "after".to_string(),
+        });
+
+        assert!(prompt.contains("Scope: Whole file"));
+        assert!(prompt.contains("Workspace review mode: All"));
+        assert!(!prompt.contains("Lines:"));
+    }
+
+    #[test]
+    fn review_run_scope_key_normalizes_repo_and_context() {
+        assert_eq!(
+            review_run_scope_key("/tmp/repo/", "/tmp/repo::workspace::all"),
+            "/tmp/repo::/tmp/repo::workspace::all"
+        );
+    }
+
+    #[test]
+    fn active_review_run_guard_rejects_batch_vs_batch_contention() {
+        let first = ActiveReviewRunGuard::acquire(review_run_scope_key(
+            "/tmp/repo-batch",
+            "/tmp/repo-batch::workspace::all",
+        ))
+        .unwrap();
+        let second = ActiveReviewRunGuard::acquire(review_run_scope_key(
+            "/tmp/repo-batch",
+            "/tmp/repo-batch::workspace::all",
+        ));
+
+        assert!(matches!(second, Err(ReviewRunLockError::AlreadyRunning)));
+        drop(first);
+    }
+
+    #[test]
+    fn active_review_run_guard_rejects_batch_vs_item_contention() {
+        let first = ActiveReviewRunGuard::acquire(review_run_scope_key(
+            "/tmp/repo-item",
+            "/tmp/repo-item::workspace::all",
+        ))
+        .unwrap();
+        let second = ActiveReviewRunGuard::acquire(review_run_scope_key(
+            "/tmp/repo-item",
+            "/tmp/repo-item::workspace::all",
+        ));
+
+        assert!(matches!(second, Err(ReviewRunLockError::AlreadyRunning)));
+        drop(first);
+    }
+
+    #[test]
+    fn validate_batch_payload_rejects_mismatched_issue_ids() {
+        let error = validate_review_batch_payload(&ApplyReviewBatchRequest {
+            repo: "/tmp/repo".to_string(),
+            provider: BatchAiProvider::Codex,
+            context_id: "/tmp/repo::workspace::all".to_string(),
+            context_mode: "workspace".to_string(),
+            workspace_mode: Some(WorkspaceMode::All),
+            commit_sha: None,
+            batch_run_id: "batch-1".to_string(),
+            issue_ids: vec!["ri-1".to_string()],
+            issue_snapshots: vec![ReviewBatchIssueSnapshot {
+                id: "ri-2".to_string(),
+                title: "Mismatch".to_string(),
+                note: "".to_string(),
+                file_path: "src/app.tsx".to_string(),
+                scope_type: ReviewItemScope::File,
+                start_line: None,
+                end_line: None,
+            }],
+            brief_text: "REVIEW DESK".to_string(),
+        })
+        .unwrap_err();
+
+        assert_eq!(error.error_code, "invalid_payload");
+    }
+
+    #[test]
+    fn validate_batch_payload_rejects_empty_selection() {
+        let error = validate_review_batch_payload(&ApplyReviewBatchRequest {
+            repo: "/tmp/repo".to_string(),
+            provider: BatchAiProvider::Codex,
+            context_id: "/tmp/repo::workspace::all".to_string(),
+            context_mode: "workspace".to_string(),
+            workspace_mode: Some(WorkspaceMode::All),
+            commit_sha: None,
+            batch_run_id: "batch-1".to_string(),
+            issue_ids: vec![],
+            issue_snapshots: vec![],
+            brief_text: "REVIEW DESK".to_string(),
+        })
+        .unwrap_err();
+
+        assert_eq!(error.error_code, "empty_selection");
+    }
+
+    #[test]
+    fn validate_review_batch_brief_size_rejects_oversized_prompts() {
+        let error = validate_review_batch_brief_size(&"a".repeat(24_001)).unwrap_err();
+
+        assert_eq!(error.error_code, "brief_too_large");
+    }
+
+    #[test]
+    fn build_review_batch_prompt_preserves_brief_text() {
+        let prompt = build_review_batch_prompt("REVIEW DESK\nFILE: src/app.tsx");
+
+        assert!(prompt.contains("REVIEW DESK"));
+        assert!(prompt.contains("FILE: src/app.tsx"));
+    }
+
+    #[test]
+    fn normalize_changed_files_dedupes_repo_relative_paths_in_order() {
+        let normalized = normalize_changed_files(
+            Path::new("/tmp/repo"),
+            vec![
+                "/tmp/repo/src/app.tsx".into(),
+                "src/app.tsx".into(),
+                "/tmp/repo/src/lib.rs".into(),
+            ],
+        );
+
+        assert_eq!(normalized, vec!["src/app.tsx", "src/lib.rs"]);
+    }
+
+    #[test]
+    fn classify_provider_failure_maps_unavailable_and_context_limit_errors() {
+        assert_eq!(
+            classify_provider_failure("codex command not found", "codex command not found")
+                .error_code,
+            "provider_unavailable"
+        );
+        assert_eq!(
+            classify_provider_failure("context window exceeded", "context window exceeded")
+                .error_code,
+            "provider_context_limit"
+        );
     }
 }
