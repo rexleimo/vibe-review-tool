@@ -1,0 +1,29 @@
+.mode-pill {
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: 0;
+  display: flex;
+  gap: 2px;
+}
+
+.mode-pill-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.mode-pill-btn:hover {
+  color: var(--text-primary);
+}
+
+.mode-pill-btn.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #dff1ff;
+}

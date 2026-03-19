@@ -1,0 +1,30 @@
+# Dependencies
+/target
+node_modules
+
+# Build
+dist
+build
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude
+.superpowers
+
+# Environment
+.env
+.env.local
+
+# Misc
+*.log
+.contextdb-enable
+memory/

@@ -1,0 +1,128 @@
+.ai-summary-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+  padding: 24px;
+  backdrop-filter: blur(4px);
+}
+
+.ai-summary {
+  width: min(760px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  border: none;
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-summary-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-tertiary);
+}
+
+.ai-summary-head h2 {
+  margin: 4px 0 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.ai-summary-kicker {
+  margin: 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.ai-summary-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-summary-body {
+  padding: 24px;
+  display: grid;
+  gap: 18px;
+  min-height: 0;
+}
+
+.ai-summary-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  padding: 14px 18px;
+}
+
+.ai-summary-meta span {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.ai-summary-meta strong {
+  font-size: 0.88rem;
+  color: var(--text-primary);
+}
+
+.ai-summary-panel {
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  padding: 18px;
+  min-height: 240px;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.ai-summary-state {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.ai-summary-state.error {
+  color: var(--accent-red);
+}
+
+.ai-summary-note {
+  border: none;
+  border-radius: var(--radius-md);
+  background: rgba(255, 214, 10, 0.1);
+  color: var(--accent-yellow);
+  padding: 14px 16px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.ai-summary-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+  font: 500 0.94rem/1.7 "SFMono-Regular", Menlo, Consolas, monospace;
+  overflow: auto;
+  min-height: 0;
+}
+
+.ai-summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}

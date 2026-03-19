@@ -1,0 +1,21 @@
+[package]
+name = "review_engine"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "review-engine"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+time = { version = "=0.3.36", features = ["formatting"] }
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.10"

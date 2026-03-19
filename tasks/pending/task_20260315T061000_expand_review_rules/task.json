@@ -1,0 +1,26 @@
+{
+  "id": "task_20260315T061000_expand_review_rules",
+  "title": "Expand review-editor rule set",
+  "description": "Add at least two additional markdown review rules without breaking existing JSON schema",
+  "type": "implementation",
+  "status": "pending",
+  "params": {
+    "project": "review-editor",
+    "depends_on": "task_20260315T060000_review_editor_mvp",
+    "scope": [
+      "Add heading structure rule",
+      "Add trailing whitespace rule",
+      "Keep top-level output schema unchanged"
+    ],
+    "acceptance": [
+      "Existing test remains green",
+      "New rule tests are added and pass",
+      "README documents new rules"
+    ]
+  },
+  "result": {},
+  "created_at": "2026-03-15T06:05:11.000Z",
+  "started_at": "",
+  "completed_at": "",
+  "error": null
+}

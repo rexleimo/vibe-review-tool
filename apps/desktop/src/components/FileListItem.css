@@ -1,0 +1,50 @@
+.file-list-item {
+  padding: 7px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background var(--transition);
+  border-left: 2px solid transparent;
+}
+
+.file-list-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.file-list-item.selected {
+  background: var(--bg-tertiary);
+  border-left-color: var(--accent-blue);
+}
+
+.file-status {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  min-width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.file-dir {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-name {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-list-item.selected .file-name {
+  color: var(--text-primary);
+}

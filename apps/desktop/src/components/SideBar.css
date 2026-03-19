@@ -1,0 +1,246 @@
+.sidebar {
+  flex-shrink: 0;
+  border-right: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  overflow: hidden;
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+}
+
+.sidebar-loading {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* Top panel: commit list */
+.sb-top-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Bottom panel: file list */
+.sb-bottom-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Divider between panels */
+.sb-panel-divider {
+  height: 1px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+/* Panel header */
+.sb-panel-header {
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.sb-panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.sb-panel-subtitle {
+  font-size: 11px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Panel content: scrollable list */
+.sb-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+/* Commit list */
+.commit-list {
+  flex: 1;
+}
+
+/* File tree */
+.file-tree {
+  padding: 4px 0;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: all var(--transition);
+  border-left: 3px solid transparent;
+}
+
+.tree-row:hover {
+  background: var(--bg-tertiary);
+}
+
+.tree-row.selected {
+  background: rgba(77, 159, 255, 0.15);
+  border-left-color: var(--accent-blue);
+}
+
+.tree-row.tree-dir {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+.tree-row.tree-file {
+  font-size: 12px;
+  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+.tree-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.tree-status {
+  font-size: 10px;
+  font-weight: 700;
+  width: 12px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.tree-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.tree-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-dir .tree-name {
+  color: var(--text-primary);
+}
+
+.tree-file .tree-name {
+  color: var(--text-primary);
+}
+
+.tree-count {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.sb-commit-row {
+  padding: 12px 16px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: all var(--transition);
+  user-select: none;
+}
+
+.sb-commit-row:hover {
+  background: var(--bg-tertiary);
+}
+
+.sb-commit-row.selected {
+  background: rgba(77, 159, 255, 0.15);
+  border-left-color: var(--accent-blue);
+}
+
+.sb-commit-info {
+  min-width: 0;
+}
+
+.sb-commit-subject {
+  color: var(--text-primary);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sb-commit-meta {
+  color: var(--text-secondary);
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+/* Stats */
+.stat-add {
+  color: var(--accent-green);
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: auto;
+}
+
+.stat-del {
+  color: var(--accent-red);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* View toggle */
+.sb-view-toggle {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.view-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.view-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.view-btn.active {
+  background: var(--bg-tertiary);
+  color: var(--accent-blue);
+}

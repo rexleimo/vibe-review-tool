@@ -1,0 +1,31 @@
+{
+  "id": "task_20260315T074814_p1_gui_shell",
+  "title": "Plan and start P1 desktop GUI shell",
+  "description": "Build Tauri + React + TypeScript shell that consumes review-engine outputs",
+  "type": "implementation",
+  "status": "completed",
+  "params": {
+    "project": "review-editor",
+    "depends_on": "task_20260315T071202_review_engine_p0",
+    "scope": [
+      "Create apps/desktop Tauri scaffold",
+      "Wire local scan trigger to review-engine binary",
+      "Render findings list and severity filters"
+    ]
+  },
+  "result": {
+    "desktop_app": "target/release/bundle/macos/Review Editor.app",
+    "dmg": "target/release/bundle/dmg/Review Editor_0.1.0_aarch64.dmg",
+    "frontend_build": "apps/desktop/dist",
+    "tauri_crate": "apps/desktop/src-tauri",
+    "features": [
+      "commit graph with local history pagination (+200)",
+      "changed file list for commit and workspace modes",
+      "monaco split diff viewer with large-file guard and force-open"
+    ]
+  },
+  "created_at": "2026-03-15T07:48:14.000Z",
+  "started_at": "2026-03-15T07:52:06.000Z",
+  "completed_at": "2026-03-15T09:38:03.000Z",
+  "error": null
+}

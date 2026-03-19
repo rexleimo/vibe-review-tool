@@ -1,0 +1,30 @@
+{
+  "id": "task_20260315T060000_review_editor_mvp",
+  "title": "Build review-editor MVP CLI skeleton",
+  "description": "Create a minimal local CLI that reads markdown and emits structured review JSON",
+  "type": "implementation",
+  "status": "completed",
+  "params": {
+    "project": "review-editor",
+    "scope": [
+      "Create minimal CLI entrypoint for one markdown file input",
+      "Emit deterministic JSON review output to stdout",
+      "Implement one concrete review rule and one automated test"
+    ],
+    "acceptance": [
+      "CLI runs from repository root with a markdown file argument",
+      "Output is valid JSON with stable top-level schema",
+      "At least one automated test exists and passes",
+      "README includes run instructions"
+    ]
+  },
+  "result": {
+    "entrypoint": "python3 -m review_editor.cli <markdown_file>",
+    "test_command": "python3 -m unittest discover -s tests -p 'test_*.py'",
+    "readme": "README.md"
+  },
+  "created_at": "2026-03-15T05:59:47.000Z",
+  "started_at": "2026-03-15T06:00:00.000Z",
+  "completed_at": "2026-03-15T06:05:11.000Z",
+  "error": null
+}
