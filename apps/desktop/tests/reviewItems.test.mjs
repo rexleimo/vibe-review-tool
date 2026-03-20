@@ -32,8 +32,13 @@ import {
   shouldClearSelectedReviewItem,
 } from "../.tmp-tests/reviewPane.js";
 import {
-  resolveReviewItemDetailActions,
-} from "../.tmp-tests/reviewItemActions.js";
+  resolveReviewItemDetailFooter,
+  resolveReviewItemDetailSections,
+} from "../.tmp-tests/reviewItemDetailLayout.js";
+import {
+  buildReviewComposerSuccessFeedback,
+  submitReviewItemComposer,
+} from "../.tmp-tests/reviewComposer.js";
 import {
   applyReviewBatchWritePlan,
   normalizeStoredReviewState,
@@ -70,6 +75,83 @@ test("buildReviewContextId anchors commit review to repo and sha", () => {
       workspaceMode: null,
     }),
     "/tmp/repo::commit::abc123",
+  );
+});
+
+test("submitReviewItemComposer closes immediately before awaiting submit", async () => {
+  const events = [];
+  let releaseSubmit;
+  const gate = new Promise((resolve) => {
+    releaseSubmit = resolve;
+  });
+
+  const submitPromise = submitReviewItemComposer({
+    title: "  Fix empty state  ",
+    note: "  Keep button visible  ",
+    onClose: () => {
+      events.push("close");
+    },
+    onSubmit: async (payload) => {
+      events.push(`submit:${payload.title}:${payload.note}`);
+      await gate;
+      events.push("submit:done");
+    },
+  });
+
+  assert.deepEqual(events, ["close", "submit:Fix empty state:Keep button visible"]);
+  releaseSubmit();
+  const submitted = await submitPromise;
+  assert.equal(submitted, true);
+  assert.deepEqual(events, [
+    "close",
+    "submit:Fix empty state:Keep button visible",
+    "submit:done",
+  ]);
+});
+
+test("submitReviewItemComposer ignores empty titles", async () => {
+  let closed = false;
+  let submitted = false;
+
+  const result = await submitReviewItemComposer({
+    title: "   ",
+    note: "note",
+    onClose: () => {
+      closed = true;
+    },
+    onSubmit: async () => {
+      submitted = true;
+    },
+  });
+
+  assert.equal(result, false);
+  assert.equal(closed, false);
+  assert.equal(submitted, false);
+});
+
+test("buildReviewComposerSuccessFeedback targets the saved item and returns success copy", () => {
+  assert.deepEqual(
+    buildReviewComposerSuccessFeedback({
+      mode: "create",
+      itemId: "ri_1",
+      title: "Fix empty state",
+    }),
+    {
+      selectedReviewItemId: "ri_1",
+      toastMessage: "已创建 Review Item：Fix empty state",
+    },
+  );
+
+  assert.deepEqual(
+    buildReviewComposerSuccessFeedback({
+      mode: "edit",
+      itemId: "ri_2",
+      title: "Refine loading copy",
+    }),
+    {
+      selectedReviewItemId: "ri_2",
+      toastMessage: "已更新 Review Item：Refine loading copy",
+    },
   );
 });
 
@@ -331,42 +413,13 @@ test("shouldClearSelectedReviewItem only clears when item truly no longer exists
   assert.equal(shouldClearSelectedReviewItem(null, false), false);
 });
 
-test("resolveReviewItemDetailActions exposes review-first actions for open items", () => {
+test("resolveReviewItemDetailFooter keeps three visible decisions for needs_review", () => {
   assert.deepEqual(
-    resolveReviewItemDetailActions({
-      status: "open",
-      aiBusy: false,
-      providerLabel: "Codex CLI",
-    }),
-    {
-      primary: {
-        action: "ask_ai",
-        label: "Ask Codex CLI To Fix",
-        disabled: false,
-      },
-      secondary: [
-        {
-          action: "edit",
-          label: "编辑建议",
-          disabled: false,
-        },
-        {
-          action: "delete",
-          label: "删除",
-          disabled: false,
-          tone: "danger",
-        },
-      ],
-    },
-  );
-});
-
-test("resolveReviewItemDetailActions exposes accept-continue-reopen actions for needs review", () => {
-  assert.deepEqual(
-    resolveReviewItemDetailActions({
+    resolveReviewItemDetailFooter({
       status: "needs_review",
-      aiBusy: false,
       providerLabel: "Codex CLI",
+      busy: false,
+      busyAction: null,
     }),
     {
       primary: {
@@ -390,12 +443,46 @@ test("resolveReviewItemDetailActions exposes accept-continue-reopen actions for 
   );
 });
 
-test("resolveReviewItemDetailActions reduces resolved items to reopen only", () => {
+test("resolveReviewItemDetailFooter returns open actions for open items", () => {
   assert.deepEqual(
-    resolveReviewItemDetailActions({
-      status: "resolved",
-      aiBusy: false,
+    resolveReviewItemDetailFooter({
+      status: "open",
+      busyBaseStatus: null,
       providerLabel: "Codex CLI",
+      busy: false,
+      busyAction: null,
+    }),
+    {
+      primary: {
+        action: "ask_ai",
+        label: "让 Codex CLI 修改",
+        disabled: false,
+      },
+      secondary: [
+        {
+          action: "edit",
+          label: "编辑建议",
+          disabled: false,
+        },
+        {
+          action: "delete",
+          label: "删除",
+          disabled: false,
+          tone: "danger",
+        },
+      ],
+    },
+  );
+});
+
+test("resolveReviewItemDetailFooter reduces resolved items to reopen only", () => {
+  assert.deepEqual(
+    resolveReviewItemDetailFooter({
+      status: "resolved",
+      busyBaseStatus: null,
+      providerLabel: "Codex CLI",
+      busy: false,
+      busyAction: null,
     }),
     {
       primary: {
@@ -405,6 +492,99 @@ test("resolveReviewItemDetailActions reduces resolved items to reopen only", () 
       },
       secondary: [],
     },
+  );
+});
+
+test("resolveReviewItemDetailFooter keeps needs_review layout while ask_ai is busy", () => {
+  const footer = resolveReviewItemDetailFooter({
+    status: "needs_review",
+    providerLabel: "Codex CLI",
+    busy: true,
+    busyAction: "ask_ai",
+  });
+
+  assert.equal(footer.primary.label, "接受并解决");
+  assert.equal(footer.primary.disabled, true);
+  assert.equal(footer.secondary[0].label, "继续让 Codex CLI 修改");
+  assert.equal(footer.secondary[0].loading, true);
+  assert.equal(footer.secondary[0].disabled, true);
+  assert.equal(footer.secondary[1].disabled, true);
+});
+
+test("resolveReviewItemDetailFooter keeps needs_review layout while ai_editing tracks needs_review", () => {
+  const footer = resolveReviewItemDetailFooter({
+    status: "ai_editing",
+    busyBaseStatus: "needs_review",
+    providerLabel: "Codex CLI",
+    busy: true,
+    busyAction: "ask_ai",
+  });
+
+  assert.equal(footer.primary.label, "接受并解决");
+  assert.equal(footer.primary.disabled, true);
+  assert.equal(footer.secondary[0].label, "继续让 Codex CLI 修改");
+  assert.equal(footer.secondary[0].loading, true);
+  assert.equal(footer.secondary[0].disabled, true);
+  assert.equal(footer.secondary[1].label, "重新打开");
+  assert.equal(footer.secondary[1].disabled, true);
+});
+
+test("resolveReviewItemDetailFooter keeps open layout while primary ask_ai is busy", () => {
+  const footer = resolveReviewItemDetailFooter({
+    status: "ai_editing",
+    busyBaseStatus: "open",
+    providerLabel: "Codex CLI",
+    busy: true,
+    busyAction: "ask_ai",
+  });
+
+  assert.equal(footer.primary.label, "让 Codex CLI 修改");
+  assert.equal(footer.primary.loading, true);
+  assert.equal(footer.primary.disabled, true);
+  assert.equal(footer.secondary[0].label, "编辑建议");
+  assert.equal(footer.secondary[0].disabled, true);
+  assert.equal(footer.secondary[1].label, "删除");
+  assert.equal(footer.secondary[1].disabled, true);
+});
+
+test("resolveReviewItemDetailFooter throws when ai_editing is missing busyBaseStatus", () => {
+  assert.throws(
+    () =>
+      resolveReviewItemDetailFooter({
+        status: "ai_editing",
+        providerLabel: "Codex CLI",
+        busy: true,
+        busyAction: "ask_ai",
+      }),
+    /missing busyBaseStatus for ai_editing detail footer/,
+  );
+});
+
+test("resolveReviewItemDetailSections promotes lastError directly below reviewer note", () => {
+  assert.deepEqual(
+    resolveReviewItemDetailSections({
+      status: "needs_review",
+      hasReviewerNote: true,
+      hasAiSummary: true,
+      hasChangedFiles: true,
+      hasTimeline: true,
+      hasLastError: true,
+    }),
+    ["reviewer_note", "last_error", "ai_summary", "changed_files", "timeline"],
+  );
+});
+
+test("resolveReviewItemDetailSections hides empty AI/result blocks for open items", () => {
+  assert.deepEqual(
+    resolveReviewItemDetailSections({
+      status: "open",
+      hasReviewerNote: true,
+      hasAiSummary: false,
+      hasChangedFiles: false,
+      hasTimeline: true,
+      hasLastError: false,
+    }),
+    ["reviewer_note", "timeline"],
   );
 });
 
