@@ -64,7 +64,7 @@ jobs:
             args: ""
           - platform: windows-latest
             args: ""
-          - platform: macos-13
+          - platform: macos-15-intel
             args: "--target x86_64-apple-darwin"
           - platform: macos-14
             args: "--target aarch64-apple-darwin"
@@ -105,6 +105,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: apps/desktop
+          tauriScript: npm run tauri
           tagName: ${{ github.ref_name }}
           releaseName: ${{ needs.validate-release.outputs.release_name }}
           releaseBody: ${{ needs.validate-release.outputs.release_body }}

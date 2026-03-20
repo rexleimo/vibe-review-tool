@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "test:review-items": "rm -rf .tmp-tests && tsc -p tsconfig.test.json && node --test tests/reviewItems.test.mjs tests/tauriStorePlugin.test.mjs && rm -rf .tmp-tests",
     "test:release-version": "node --test tests/releaseVersion.test.mjs",
-    "test:desktop": "npm run test:review-items && npm run test:release-version",
+    "test:release-workflow": "node --test tests/releaseWorkflow.test.mjs",
+    "test:desktop": "npm run test:review-items && npm run test:release-version && npm run test:release-workflow",
     "release:assert-version": "node scripts/assert-release-version.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
