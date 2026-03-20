@@ -30,20 +30,17 @@ export function TopBar({
   const displayPathHint = projectPathHint || "";
 
   return (
-    <header className="topbar">
+    <header className="topbar" data-tauri-drag-region>
       <div className="topbar-left" data-tauri-drag-region>
-        <div className="topbar-logo" />
-        <button className="topbar-switcher" onClick={onSwitchProject}>
-          <span className="topbar-switcher-main">{displayName}</span>
+        <div className="topbar-project-indicator" onClick={onSwitchProject}>
+          <div className="topbar-logo" />
+          <span className="topbar-project-name">{displayName}</span>
           {displayPathHint && (
-            <span className="topbar-switcher-sub" title={displayPathHint}>
+            <span className="tiny" style={{ opacity: 0.5, marginLeft: 4 }}>
               {displayPathHint}
             </span>
           )}
-          <span className="topbar-switcher-chevron" aria-hidden="true">
-            ▾
-          </span>
-        </button>
+        </div>
       </div>
 
       <div className="topbar-center" data-tauri-drag-region>
@@ -55,14 +52,22 @@ export function TopBar({
 
       <div className="topbar-right">
         <div className="topbar-controls">
-          <button className="topbar-ai-btn" onClick={onPrimaryAiAction}>
-            AI
-          </button>
-          <button className="topbar-refresh-btn" onClick={onRefresh}>
-            刷新
-          </button>
-          <div className="topbar-controls-divider" aria-hidden="true" />
           <ModePill mode={mode} onModeChange={onModeChange} />
+          <button
+            type="button"
+            className="topbar-refresh-btn"
+            onClick={onRefresh}
+            title="Refresh"
+          >
+            ↻
+          </button>
+          <button
+            type="button"
+            className="topbar-ai-btn"
+            onClick={onPrimaryAiAction}
+          >
+            ✦ Summary
+          </button>
         </div>
       </div>
     </header>

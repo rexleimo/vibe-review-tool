@@ -11,7 +11,9 @@ Desktop GUI for `review_engine` built with `Tauri + React + TypeScript`.
 - Use an integrated Arc-inspired titlebar centered on current review context
 - Choose a default AI provider from `Review Editor -> Settings...`
 - Generate a real review summary through `AI -> Generate Review Summary` or the titlebar AI entry
-- Keep explanation, risk review, fix suggestions, and comment drafting on placeholder actions for now
+- Create structured review items from the current file or selected diff range
+- Use the right-side review queue to track `Open`, `AI Editing`, `Needs Review`, and `Resolved`
+- Let the selected AI provider edit the workspace directly from a review item, then review the resulting diff
 
 ## Dev Run
 

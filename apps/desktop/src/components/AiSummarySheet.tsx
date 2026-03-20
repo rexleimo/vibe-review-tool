@@ -1,5 +1,6 @@
 import { type AiProvider } from "../hooks/useAiProvider";
 import "./AiSummarySheet.css";
+import { formatInvokeError } from "../lib/formatInvokeError";
 
 type SummaryStatus = "idle" | "loading" | "success" | "error";
 
@@ -26,6 +27,7 @@ export function AiSummarySheet({
   onRetry,
   onOpenSettings,
 }: AiSummarySheetProps) {
+  const errorText = formatInvokeError(error);
   return (
     <section className="ai-summary-backdrop" onClick={onClose}>
       <div
@@ -63,7 +65,7 @@ export function AiSummarySheet({
 
           {status === "error" && (
             <div className="ai-summary-panel">
-              <p className="ai-summary-state error">{error}</p>
+              <pre className="ai-summary-error">{errorText}</pre>
               <div className="ai-summary-actions">
                 <button type="button" className="primary" onClick={onRetry}>
                   重新生成

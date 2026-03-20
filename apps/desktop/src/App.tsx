@@ -1,5 +1,6 @@
 import "@fontsource/manrope";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { editor } from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -7,13 +8,58 @@ import { DiffEditor } from "@monaco-editor/react";
 import "./App.css";
 import { AiActionPlaceholder } from "./components/AiActionPlaceholder";
 import { AiSummarySheet } from "./components/AiSummarySheet";
-import { FixSheet } from "./components/FixSheet";
 import { ProviderSettingsSheet } from "./components/ProviderSettingsSheet";
+import { ReviewBatchRunDetail } from "./components/ReviewBatchRunDetail";
+import { ReviewItemComposer } from "./components/ReviewItemComposer";
+import { ReviewItemDetail } from "./components/ReviewItemDetail";
+import { ReviewQueue } from "./components/ReviewQueue";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { TopBar } from "./components/TopBar";
 import { SideBar } from "./components/SideBar";
 import { type AiProvider, useAiProvider } from "./hooks/useAiProvider";
 import { type MenuAction, useMenuActions } from "./hooks/useMenuActions";
+import { useReviewState } from "./hooks/useReviewState";
+import { formatInvokeError } from "./lib/formatInvokeError";
+import { buildReviewComposerSuccessFeedback } from "./lib/reviewComposer";
+import {
+  buildFailedBatchRunPatch,
+  buildLocalOrphanedRunOverlay,
+  buildReviewBatchBrief,
+  buildReviewBatchIssueSnapshots,
+  createQueuedBatchRun,
+  isReviewBatchBriefTooLarge,
+  planQueuedBatchWrite,
+  planCompletedBatchWrite,
+  planFailedBatchWrite,
+  planRunningBatchWrite,
+  resolveBatchRunBlockingState,
+  type ReviewBatchRun,
+  type ReviewBatchRunErrorCode,
+  type ReviewBatchRunLocalOverlay,
+} from "./lib/reviewBatchRuns";
+import {
+  type CreateReviewItemInput,
+  type ReviewItem,
+  buildReviewItemAiCompletedPatch,
+  buildReviewItemAiFailedPatch,
+  buildReviewItemAiStartedPatch,
+  buildReviewContextId,
+  buildReviewItemReopenedPatch,
+  buildReviewItemResolvedPatch,
+  getVisibleReviewItems,
+  normalizeReviewRange,
+} from "./lib/reviewItems";
+import { applyReviewBatchWritePlan } from "./lib/reviewState";
+import {
+  resolveSelectedReviewItemBusyState,
+  type ReviewItemBusyActionOverlay,
+} from "./lib/reviewItemDetailLayout";
+import {
+  resolveReviewPaneMode,
+  resolveReviewPanePrimaryAction,
+  resolveQueueFooterActions,
+  shouldClearSelectedReviewItem,
+} from "./lib/reviewPane";
 
 type Mode = "commit" | "workspace";
 type WorkspaceMode = "all" | "staged" | "unstaged";
@@ -86,11 +132,41 @@ type SummarySheetState = {
   truncated: boolean;
 };
 
+type ApplyReviewItemResponse = {
+  provider: AiProvider;
+  providerLabel: string;
+  summary: string;
+  changedFiles: string[];
+};
+
+type ApplyReviewBatchCommandResponse = {
+  ok: boolean;
+  provider?: AiProvider;
+  providerLabel?: string;
+  summary?: string;
+  changedFiles?: string[];
+  errorCode?: string;
+  message?: string;
+  retryable?: boolean;
+  providerStderr?: string;
+};
+
+type LineSelection = {
+  startLine: number;
+  endLine: number;
+};
+
+type ReviewFeedbackToastState = {
+  kind: "success" | "error";
+  message: string;
+};
+
 const PAGE_SIZE = 200;
 const DEFAULT_SIDEBAR_WIDTH = 420;
 const MIN_SIDEBAR_WIDTH = 300;
 const MAX_SIDEBAR_WIDTH = 760;
 const DIFF_MIN_WIDTH = 360;
+const REVIEW_PANE_WIDTH = 420;
 const SIDEBAR_WIDTH_KEY = "review-editor.sidebar-width";
 const SIDEBAR_COLLAPSED_KEY = "review-editor.sidebar-collapsed";
 const PROJECTS_KEY = "review-editor.projects";
@@ -306,6 +382,10 @@ function createProjectId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function createBatchRunId(): string {
+  return `batch-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function resolveInitialRepo(): string {
   const projects = readSavedProjects();
   const activeProjectId = readActiveProjectId();
@@ -334,13 +414,43 @@ function providerFallbackLabel(provider: AiProvider): string {
   }
 }
 
+function normalizeBatchRunErrorCode(
+  errorCode: ApplyReviewBatchCommandResponse["errorCode"] | ReviewBatchRunErrorCode,
+): ReviewBatchRunErrorCode {
+  switch (errorCode) {
+    case "":
+    case "empty_selection":
+    case "invalid_payload":
+    case "provider_unavailable":
+    case "batch_already_running":
+    case "brief_too_large":
+    case "provider_context_limit":
+    case "provider_execution_failed":
+    case "persistence_failed":
+    case "orphaned_run":
+      return errorCode;
+    default:
+      return "provider_execution_failed";
+  }
+}
+
 function App() {
   const { provider: aiProvider, setProvider: setAiProvider } = useAiProvider();
+  const {
+    items: reviewItems,
+    batchRuns,
+    createReviewItem,
+    updateReviewItem,
+    deleteReviewItem,
+    replaceReviewState,
+    reload: reloadReviewState,
+  } = useReviewState();
   const [locale, _setLocale] = useState<Locale>(readLocale);
   const [projects, setProjects] = useState<SavedProject[]>(readSavedProjects);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(readActiveProjectId);
   const [projectNameDraft, setProjectNameDraft] = useState("");
   const [showProjectCenter, setShowProjectCenter] = useState(false);
+  const projectNameInputRef = useRef<HTMLInputElement | null>(null);
   const [showProviderSettings, setShowProviderSettings] = useState(false);
   const [providerStatuses, setProviderStatuses] = useState<AiProviderStatus[]>([]);
   const [providerStatusesLoading, setProviderStatusesLoading] = useState(false);
@@ -348,13 +458,16 @@ function App() {
   const [repoDraft, setRepoDraft] = useState(resolveInitialRepo);
   const [repo, setRepo] = useState(resolveInitialRepo);
   const [mode, setMode] = useState<Mode>("commit");
-  const [workspaceMode, _setWorkspaceMode] = useState<WorkspaceMode>("all");
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("all");
 
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [draggingSidebar, setDraggingSidebar] = useState(false);
   const workbenchRef = useRef<HTMLElement | null>(null);
   const diffPanelRef = useRef<HTMLElement | null>(null);
+  const diffEditorRef = useRef<editor.IStandaloneDiffEditor | null>(null);
+  const diffSelectionListenerRef = useRef<{ dispose: () => void } | null>(null);
+  const pendingFocusFilePathRef = useRef<string | null>(null);
 
   const [commits, setCommits] = useState<CommitNode[]>([]);
   const [_hasMoreCommits, setHasMoreCommits] = useState(false);
@@ -370,9 +483,32 @@ function App() {
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState("");
   const [forceOpen, setForceOpen] = useState(false);
+  const [selectedRange, setSelectedRange] = useState<LineSelection | null>(null);
   const [placeholder, setPlaceholder] = useState<PlaceholderState | null>(null);
   const [summarySheet, setSummarySheet] = useState<SummarySheetState | null>(null);
-  const [fixSheetOpen, setFixSheetOpen] = useState(false);
+  const [reviewFeedbackToast, setReviewFeedbackToast] = useState<ReviewFeedbackToastState | null>(null);
+  const [composerDraft, setComposerDraft] = useState<CreateReviewItemInput | null>(null);
+  const [composerMode, setComposerMode] = useState<"create" | "edit">("create");
+  const [editingReviewItemId, setEditingReviewItemId] = useState<string | null>(null);
+  const [selectedReviewItemId, setSelectedReviewItemId] = useState<string | null>(null);
+  const [selectedBatchRunId, setSelectedBatchRunId] = useState<string | null>(null);
+  const [reviewItemBusyAction, setReviewItemBusyAction] = useState<ReviewItemBusyActionOverlay | null>(null);
+  const [localBatchFailures, setLocalBatchFailures] = useState<ReviewBatchRunLocalOverlay[]>([]);
+  const [localBatchRunDetails, setLocalBatchRunDetails] = useState<ReviewBatchRun[]>([]);
+
+  useEffect(() => {
+    if (!showProjectCenter) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setShowProjectCenter(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    requestAnimationFrame(() => projectNameInputRef.current?.focus());
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showProjectCenter]);
 
   const activeProject = useMemo(
     () => projects.find((item) => item.id === activeProjectId) ?? null,
@@ -390,6 +526,113 @@ function App() {
   const currentProviderStatus = useMemo(
     () => providerStatuses.find((item) => item.provider === aiProvider) ?? null,
     [providerStatuses, aiProvider],
+  );
+  const currentReviewContextId = useMemo(
+    () =>
+      buildReviewContextId({
+        repoPath: repo,
+        contextMode: mode,
+        commitSha: mode === "commit" ? selectedCommit : null,
+        workspaceMode: mode === "workspace" ? workspaceMode : null,
+      }),
+    [repo, mode, selectedCommit, workspaceMode],
+  );
+  const visibleReviewItems = useMemo(
+    () =>
+      getVisibleReviewItems(reviewItems, {
+        repoPath: repo,
+        contextId: currentReviewContextId,
+        selectedFilePath: selectedFile?.path ?? null,
+      }),
+    [currentReviewContextId, repo, reviewItems, selectedFile?.path],
+  );
+  const selectedReviewItem = useMemo(
+    () => reviewItems.find((item) => item.id === selectedReviewItemId) ?? null,
+    [reviewItems, selectedReviewItemId],
+  );
+  const selectedReviewItemBusyState = useMemo(
+    () =>
+      resolveSelectedReviewItemBusyState({
+        selectedItemId: selectedReviewItemId,
+        overlay: reviewItemBusyAction,
+      }),
+    [reviewItemBusyAction, selectedReviewItemId],
+  );
+  const visibleOpenItems = useMemo(
+    () => visibleReviewItems.filter((item) => item.status === "open"),
+    [visibleReviewItems],
+  );
+  const selectedBatchRun = useMemo(
+    () => localBatchRunDetails.find((batchRun) => batchRun.id === selectedBatchRunId)
+      ?? batchRuns.find((batchRun) => batchRun.id === selectedBatchRunId)
+      ?? null,
+    [batchRuns, localBatchRunDetails, selectedBatchRunId],
+  );
+  const editingReviewItem = useMemo(
+    () => reviewItems.find((item) => item.id === editingReviewItemId) ?? null,
+    [editingReviewItemId, reviewItems],
+  );
+  const currentContextBlockingState = useMemo(() => {
+    if (!repo.trim()) {
+      return {
+        blocked: false,
+        reason: "none" as const,
+        activeItemId: null,
+        activeBatchRunId: null,
+      };
+    }
+
+    return resolveBatchRunBlockingState({
+      repoPath: repo,
+      contextId: currentReviewContextId,
+      items: reviewItems,
+      batchRuns,
+      localFailures: localBatchFailures,
+    });
+  }, [batchRuns, currentReviewContextId, localBatchFailures, repo, reviewItems]);
+  const selectedReviewItemBlockingState = useMemo(() => {
+    if (!selectedReviewItem) {
+      return {
+        blocked: false,
+        reason: "none" as const,
+        activeItemId: null,
+        activeBatchRunId: null,
+      };
+    }
+
+    return resolveBatchRunBlockingState({
+      repoPath: selectedReviewItem.repoPath,
+      contextId: selectedReviewItem.contextId,
+      items: reviewItems,
+      batchRuns,
+      localFailures: localBatchFailures,
+    });
+  }, [batchRuns, localBatchFailures, reviewItems, selectedReviewItem]);
+  const reviewPaneMode = useMemo(
+    () => resolveReviewPaneMode({
+      selectedItemId: selectedReviewItemId,
+      selectedBatchRunId,
+    }),
+    [selectedBatchRunId, selectedReviewItemId],
+  );
+  const reviewPrimaryAction = useMemo(
+    () =>
+      resolveReviewPanePrimaryAction({
+        selectedItemId: selectedReviewItemId,
+        selectedBatchRunId,
+        selectedFilePath: selectedFile?.path ?? null,
+        hasSelectedRange: selectedRange !== null,
+      }),
+    [selectedBatchRunId, selectedFile?.path, selectedRange, selectedReviewItemId],
+  );
+  const queueFooterActions = useMemo(
+    () =>
+      resolveQueueFooterActions({
+        visibleOpenCount: visibleOpenItems.length,
+        createDisabled: reviewPrimaryAction.disabled,
+        batchBlocked: currentContextBlockingState.blocked,
+      }),
+    [currentContextBlockingState.blocked, reviewPrimaryAction.disabled, visibleOpenItems.length],
   );
 
   const hasProject = repo && repo.trim().length > 0;
@@ -415,6 +658,117 @@ function App() {
     if (selectedCommitNode?.subject) return selectedCommitNode.subject;
     return activeProject?.name ?? "Review Editor";
   }, [activeProject?.name, hasProject, selectedCommitNode, selectedFile?.path]);
+
+  function choosePreferredFile(nextFiles: ChangedFile[]): ChangedFile | null {
+    const preferredPath = pendingFocusFilePathRef.current ?? selectedFile?.path ?? null;
+    pendingFocusFilePathRef.current = null;
+    if (!preferredPath) return nextFiles[0] ?? null;
+    return nextFiles.find((item) => item.path === preferredPath) ?? nextFiles[0] ?? null;
+  }
+
+  function makeReviewItemDraft(
+    scopeType: CreateReviewItemInput["scopeType"],
+    filePath: string,
+    startLine: number | null,
+    endLine: number | null,
+  ): CreateReviewItemInput {
+    return {
+      repoPath: repo,
+      contextMode: mode,
+      commitSha: mode === "commit" ? selectedCommit : null,
+      workspaceMode: mode === "workspace" ? workspaceMode : null,
+      scopeType,
+      filePath,
+      startLine,
+      endLine,
+      title: "",
+      note: "",
+    };
+  }
+
+  function upsertLocalBatchRunDetail(batchRun: ReviewBatchRun): void {
+    setLocalBatchRunDetails((prev) => [
+      batchRun,
+      ...prev.filter((entry) => entry.id !== batchRun.id),
+    ]);
+  }
+
+  function upsertLocalBatchFailureOverlay(overlay: ReviewBatchRunLocalOverlay): void {
+    setLocalBatchFailures((prev) => [
+      overlay,
+      ...prev.filter((entry) => entry.batchRunId !== overlay.batchRunId),
+    ]);
+  }
+
+  function clearLocalBatchArtifacts(batchRunId: string): void {
+    setLocalBatchFailures((prev) => prev.filter((entry) => entry.batchRunId !== batchRunId));
+    setLocalBatchRunDetails((prev) => prev.filter((entry) => entry.id !== batchRunId));
+  }
+
+  function buildLocalBatchFailureOverlay(
+    batchRun: ReviewBatchRun,
+    {
+      errorCode,
+      message,
+      retryable,
+    }: {
+      errorCode: ReviewBatchRunLocalOverlay["errorCode"];
+      message: string;
+      retryable: boolean;
+    },
+  ): ReviewBatchRunLocalOverlay {
+    if (errorCode === "orphaned_run") {
+      return buildLocalOrphanedRunOverlay({
+        batchRunId: batchRun.id,
+        repoPath: batchRun.repoPath,
+        contextId: batchRun.contextId,
+        message,
+        retryable,
+      });
+    }
+
+    return {
+      ok: false,
+      source: "local",
+      batchRunId: batchRun.id,
+      repoPath: batchRun.repoPath,
+      contextId: batchRun.contextId,
+      status: "failed",
+      errorCode,
+      message,
+      retryable,
+    };
+  }
+
+  function buildLocalFailedBatchRun(
+    batchRun: ReviewBatchRun,
+    {
+      message,
+      errorCode,
+      retryable,
+      at = new Date().toISOString(),
+    }: {
+      message: string;
+      errorCode: ReviewBatchRunErrorCode | ApplyReviewBatchCommandResponse["errorCode"];
+      retryable: boolean;
+      at?: string;
+    },
+  ): ReviewBatchRun {
+    return {
+      ...batchRun,
+      ...buildFailedBatchRunPatch({
+        lastError: message,
+        errorCode: normalizeBatchRunErrorCode(errorCode),
+        retryable,
+        at,
+      }),
+    };
+  }
+
+  async function persistBatchWritePlan(batchRun: ReviewBatchRun, writePlan: Parameters<typeof applyReviewBatchWritePlan>[1]): Promise<void> {
+    clearLocalBatchArtifacts(batchRun.id);
+    await replaceReviewState((state) => applyReviewBatchWritePlan(state, writePlan));
+  }
 
   function handleProjectSelect(path: string, name: string): void {
     setRepoDraft(path);
@@ -475,6 +829,124 @@ function App() {
     }
   }
 
+  function openFileReviewComposer(filePath = selectedFile?.path ?? null): void {
+    if (!filePath) return;
+    setComposerMode("create");
+    setEditingReviewItemId(null);
+    setComposerDraft(makeReviewItemDraft("file", filePath, null, null));
+  }
+
+  function openRangeReviewComposer(): void {
+    if (!selectedFile || !selectedRange) return;
+    setComposerMode("create");
+    setEditingReviewItemId(null);
+    setComposerDraft(
+      makeReviewItemDraft(
+        "range",
+        selectedFile.path,
+        selectedRange.startLine,
+        selectedRange.endLine,
+      ),
+    );
+  }
+
+  function handlePrimaryCreateReviewItem(): void {
+    if (reviewPrimaryAction.kind === "range") {
+      openRangeReviewComposer();
+      return;
+    }
+
+    if (reviewPrimaryAction.kind === "file") {
+      openFileReviewComposer();
+    }
+  }
+
+  function openEditReviewItem(item: ReviewItem): void {
+    setComposerMode("edit");
+    setEditingReviewItemId(item.id);
+    setComposerDraft({
+      repoPath: item.repoPath,
+      contextMode: item.contextMode,
+      commitSha: item.commitSha,
+      workspaceMode: item.workspaceMode,
+      scopeType: item.scopeType,
+      filePath: item.filePath,
+      startLine: item.startLine,
+      endLine: item.endLine,
+      title: item.title,
+      note: item.note,
+    });
+  }
+
+  function closeReviewComposer(): void {
+    setComposerDraft(null);
+    setEditingReviewItemId(null);
+    setComposerMode("create");
+  }
+
+  async function handleSubmitReviewItem(payload: { title: string; note: string }): Promise<{
+    selectedReviewItemId: string;
+    toastMessage: string;
+  }> {
+    if (!composerDraft) {
+      throw new Error("missing review item draft");
+    }
+
+    if (composerMode === "edit" && editingReviewItemId) {
+      await updateReviewItem(editingReviewItemId, {
+        title: payload.title,
+        note: payload.note,
+      });
+      return buildReviewComposerSuccessFeedback({
+        mode: "edit",
+        itemId: editingReviewItemId,
+        title: payload.title,
+      });
+    }
+
+    const created = await createReviewItem({
+      ...composerDraft,
+      title: payload.title,
+      note: payload.note,
+    });
+
+    return buildReviewComposerSuccessFeedback({
+      mode: "create",
+      itemId: created.id,
+      title: payload.title,
+    });
+  }
+
+  async function handleComposerSubmit(payload: { title: string; note: string }): Promise<void> {
+    if (!composerDraft) return;
+
+    const draftSnapshot = composerDraft;
+    const modeSnapshot = composerMode;
+    const editingReviewItemIdSnapshot = editingReviewItemId;
+
+    try {
+      const feedback = await handleSubmitReviewItem(payload);
+      setSelectedBatchRunId(null);
+      setSelectedReviewItemId(feedback.selectedReviewItemId);
+      setReviewFeedbackToast({
+        kind: "success",
+        message: feedback.toastMessage,
+      });
+    } catch (error) {
+      setComposerDraft({
+        ...draftSnapshot,
+        title: payload.title,
+        note: payload.note,
+      });
+      setEditingReviewItemId(editingReviewItemIdSnapshot);
+      setComposerMode(modeSnapshot);
+      setReviewFeedbackToast({
+        kind: "error",
+        message: `保存 Review Item 失败：${formatInvokeError(error)}`,
+      });
+    }
+  }
+
   async function generateReviewSummary(): Promise<void> {
     if (!repo.trim()) return;
 
@@ -519,7 +991,7 @@ function App() {
         status: "error",
         providerLabel: initialLabel,
         summary: "",
-        error: String(error),
+        error: error instanceof Error ? error.message : String(error),
         truncated: false,
       });
     }
@@ -577,7 +1049,7 @@ function App() {
         },
       });
       setFiles(response);
-      setSelectedFile(response[0] ?? null);
+      setSelectedFile(choosePreferredFile(response));
     } catch (err) {
       setFiles([]);
       setSelectedFile(null);
@@ -603,7 +1075,7 @@ function App() {
         },
       });
       setFiles(response);
-      setSelectedFile(response[0] ?? null);
+      setSelectedFile(choosePreferredFile(response));
     } catch (err) {
       setFiles([]);
       setSelectedFile(null);
@@ -614,41 +1086,121 @@ function App() {
     }
   }
 
+  async function refreshCurrentContext(): Promise<void> {
+    setForceOpen(false);
+    setDiff(null);
+    setDiffError("");
+
+    if (mode === "commit") {
+      if (selectedCommit) {
+        await loadCommitFiles(selectedCommit);
+      }
+      return;
+    }
+
+    await loadWorkspaceFiles();
+  }
+
+  async function fetchDiffForFile(currentFile: ChangedFile, force: boolean): Promise<FileDiffResponse> {
+    if (mode === "commit") {
+      if (!selectedCommit) {
+        throw new Error("missing selected commit");
+      }
+
+      return invoke<FileDiffResponse>("get_commit_file_diff", {
+        req: {
+          repo,
+          commitSha: selectedCommit,
+          path: currentFile.path,
+          oldPath: currentFile.oldPath,
+          status: currentFile.status,
+          force,
+        },
+      });
+    }
+
+    return invoke<FileDiffResponse>("get_workspace_file_diff", {
+      req: {
+        repo,
+        mode: workspaceMode,
+        path: currentFile.path,
+        oldPath: currentFile.oldPath,
+        status: currentFile.status,
+        force,
+      },
+    });
+  }
+
+  async function fetchReviewItemDiff(item: ReviewItem): Promise<{ file: ChangedFile; diff: FileDiffResponse }> {
+    if (item.contextMode === "commit") {
+      if (!item.commitSha) {
+        throw new Error("This review item is missing its commit anchor.");
+      }
+
+      const itemFiles = await invoke<ChangedFile[]>("get_commit_files", {
+        req: {
+          repo,
+          commitSha: item.commitSha,
+        },
+      });
+      const currentFile = itemFiles.find((file) => file.path === item.filePath);
+      if (!currentFile) {
+        throw new Error("The review item file is no longer available in this commit context.");
+      }
+
+      const itemDiff = await invoke<FileDiffResponse>("get_commit_file_diff", {
+        req: {
+          repo,
+          commitSha: item.commitSha,
+          path: currentFile.path,
+          oldPath: currentFile.oldPath,
+          status: currentFile.status,
+          force: false,
+        },
+      });
+
+      return {
+        file: currentFile,
+        diff: itemDiff,
+      };
+    }
+
+    const itemWorkspaceMode = item.workspaceMode ?? "all";
+    const itemFiles = await invoke<ChangedFile[]>("get_workspace_files", {
+      req: {
+        repo,
+        mode: itemWorkspaceMode,
+      },
+    });
+    const currentFile = itemFiles.find((file) => file.path === item.filePath);
+    if (!currentFile) {
+      throw new Error("The review item file is no longer available in the workspace view.");
+    }
+
+    const itemDiff = await invoke<FileDiffResponse>("get_workspace_file_diff", {
+      req: {
+        repo,
+        mode: itemWorkspaceMode,
+        path: currentFile.path,
+        oldPath: currentFile.oldPath,
+        status: currentFile.status,
+        force: false,
+      },
+    });
+
+    return {
+      file: currentFile,
+      diff: itemDiff,
+    };
+  }
+
   async function loadDiff(currentFile: ChangedFile, force: boolean): Promise<void> {
     setDiffLoading(true);
     setDiffError("");
 
     try {
-      if (mode === "commit") {
-        if (!selectedCommit) {
-          setDiff(null);
-          return;
-        }
-
-        const response = await invoke<FileDiffResponse>("get_commit_file_diff", {
-          req: {
-            repo,
-            commitSha: selectedCommit,
-            path: currentFile.path,
-            oldPath: currentFile.oldPath,
-            status: currentFile.status,
-            force,
-          },
-        });
-        setDiff(response);
-      } else {
-        const response = await invoke<FileDiffResponse>("get_workspace_file_diff", {
-          req: {
-            repo,
-            mode: workspaceMode,
-            path: currentFile.path,
-            oldPath: currentFile.oldPath,
-            status: currentFile.status,
-            force,
-          },
-        });
-        setDiff(response);
-      }
+      const response = await fetchDiffForFile(currentFile, force);
+      setDiff(response);
     } catch (err) {
       setDiff(null);
       setDiffError(String(err));
@@ -788,8 +1340,17 @@ function App() {
     setDiff(null);
     setDiffError("");
     setForceOpen(false);
+    setSelectedRange(null);
     setPlaceholder(null);
     setSummarySheet(null);
+    setComposerDraft(null);
+    setComposerMode("create");
+    setEditingReviewItemId(null);
+    setSelectedReviewItemId(null);
+    setSelectedBatchRunId(null);
+    setReviewItemBusyAction(null);
+    setLocalBatchFailures([]);
+    setLocalBatchRunDetails([]);
     setShowProviderSettings(false);
     setSidebarCollapsed(false);
   }
@@ -855,6 +1416,62 @@ function App() {
   }, [selectedFile, forceOpen, mode, workspaceMode, selectedCommit]);
 
   useEffect(() => {
+    setSelectedRange(null);
+  }, [selectedFile?.path, diff?.path]);
+
+  useEffect(() => {
+    return () => {
+      diffSelectionListenerRef.current?.dispose();
+      diffSelectionListenerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (shouldClearSelectedReviewItem(selectedReviewItemId, selectedReviewItem !== null)) {
+      setSelectedReviewItemId(null);
+    }
+  }, [selectedReviewItem, selectedReviewItemId]);
+
+  useEffect(() => {
+    if (!reviewFeedbackToast) return;
+    const timeoutId = window.setTimeout(() => {
+      setReviewFeedbackToast(null);
+    }, 2200);
+    return () => window.clearTimeout(timeoutId);
+  }, [reviewFeedbackToast]);
+
+  useEffect(() => {
+    if (selectedBatchRunId !== null && selectedBatchRun === null) {
+      setSelectedBatchRunId(null);
+    }
+  }, [selectedBatchRun, selectedBatchRunId]);
+
+  useEffect(() => {
+    if (!selectedReviewItem || selectedReviewItem.scopeType !== "range") return;
+    if (selectedFile?.path !== selectedReviewItem.filePath) return;
+
+    const modifiedEditor = diffEditorRef.current?.getModifiedEditor();
+    const model = modifiedEditor?.getModel();
+    if (!modifiedEditor || !model) return;
+
+    const normalizedRange = normalizeReviewRange(
+      selectedReviewItem.startLine,
+      selectedReviewItem.endLine,
+    );
+    if (!normalizedRange) return;
+
+    const startLine = Math.min(normalizedRange.startLine, model.getLineCount());
+    const endLine = Math.min(normalizedRange.endLine, model.getLineCount());
+    modifiedEditor.setSelection({
+      startLineNumber: startLine,
+      startColumn: 1,
+      endLineNumber: endLine,
+      endColumn: model.getLineMaxColumn(endLine),
+    });
+    modifiedEditor.revealLinesInCenter(startLine, endLine);
+  }, [selectedFile?.path, selectedReviewItem, diff?.path]);
+
+  useEffect(() => {
     try {
       window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
     } catch {
@@ -911,7 +1528,7 @@ function App() {
       const rect = container.getBoundingClientRect();
       const maxFromContainer = Math.max(
         MIN_SIDEBAR_WIDTH,
-        rect.width - DIFF_MIN_WIDTH,
+        rect.width - DIFF_MIN_WIDTH - REVIEW_PANE_WIDTH,
       );
       const maxWidth = Math.min(MAX_SIDEBAR_WIDTH, maxFromContainer);
       const relativeX = event.clientX - rect.left;
@@ -933,6 +1550,377 @@ function App() {
       window.removeEventListener("mouseup", onMouseUp);
     };
   }, [draggingSidebar, sidebarCollapsed]);
+
+  function handleDiffEditorMount(editorInstance: editor.IStandaloneDiffEditor): void {
+    diffEditorRef.current = editorInstance;
+    diffSelectionListenerRef.current?.dispose();
+
+    const modifiedEditor = editorInstance.getModifiedEditor();
+    const syncSelection = () => {
+      const selection = modifiedEditor.getSelection();
+      if (!selection || selection.isEmpty()) {
+        setSelectedRange(null);
+        return;
+      }
+
+      const normalizedRange = normalizeReviewRange(
+        selection.startLineNumber,
+        selection.endLineNumber,
+      );
+      setSelectedRange(normalizedRange);
+    };
+
+    diffSelectionListenerRef.current = modifiedEditor.onDidChangeCursorSelection(() => {
+      syncSelection();
+    });
+    syncSelection();
+  }
+
+  function handleJumpToReviewItem(item: ReviewItem): void {
+    setSelectedReviewItemId(item.id);
+    pendingFocusFilePathRef.current = item.filePath;
+
+    if (item.contextMode === "commit" && item.commitSha) {
+      if (mode === "commit" && selectedCommit === item.commitSha) {
+        const nextFile = files.find((file) => file.path === item.filePath);
+        if (nextFile) {
+          setSelectedFile(nextFile);
+        } else {
+          void loadCommitFiles(item.commitSha);
+        }
+        return;
+      }
+      setMode("commit");
+      setSelectedCommit(item.commitSha);
+      setSidebarCollapsed(false);
+      return;
+    }
+
+    if (mode === "workspace" && workspaceMode === (item.workspaceMode ?? "all")) {
+      const nextFile = files.find((file) => file.path === item.filePath);
+      if (nextFile) {
+        setSelectedFile(nextFile);
+      } else {
+        void loadWorkspaceFiles();
+      }
+      return;
+    }
+
+    setWorkspaceMode(item.workspaceMode ?? "all");
+    setMode("workspace");
+    setSidebarCollapsed(false);
+  }
+
+  async function handleResolveReviewItem(item: ReviewItem): Promise<void> {
+    if (item.status === "ai_editing" || item.status === "resolved") return;
+    await updateReviewItem(item.id, buildReviewItemResolvedPatch(item));
+  }
+
+  async function handleReopenReviewItem(item: ReviewItem): Promise<void> {
+    if (item.status === "ai_editing") return;
+    await updateReviewItem(item.id, buildReviewItemReopenedPatch(item));
+  }
+
+  async function handleDeleteReviewItem(item: ReviewItem): Promise<void> {
+    if (item.status === "ai_editing") return;
+    await deleteReviewItem(item.id);
+    if (editingReviewItemId === item.id) {
+      setEditingReviewItemId(null);
+      setComposerDraft(null);
+      setComposerMode("create");
+    }
+    if (selectedReviewItemId === item.id) {
+      setSelectedReviewItemId(null);
+    }
+  }
+
+  async function handleSendOpenIssuesToCodex(): Promise<void> {
+    if (!repo.trim() || visibleOpenItems.length === 0 || currentContextBlockingState.blocked) return;
+
+    const includedItems = visibleOpenItems.filter((item) => item.status === "open");
+    if (includedItems.length === 0) return;
+
+    const issueSnapshots = buildReviewBatchIssueSnapshots(includedItems);
+    const { briefText, byteLength } = buildReviewBatchBrief({
+      repoPath: repo,
+      contextMode: mode,
+      workspaceMode: mode === "workspace" ? workspaceMode : null,
+      commitSha: mode === "commit" ? selectedCommit : null,
+      issueSnapshots,
+    });
+    const batchRun = createQueuedBatchRun({
+      id: createBatchRunId(),
+      repoPath: repo,
+      contextId: currentReviewContextId,
+      issueIds: includedItems.map((item) => item.id),
+      issueSnapshots,
+      briefText,
+    });
+
+    setSelectedReviewItemId(null);
+    setSelectedBatchRunId(batchRun.id);
+
+    if (isReviewBatchBriefTooLarge(briefText)) {
+      upsertLocalBatchRunDetail(buildLocalFailedBatchRun(batchRun, {
+        message: `当前 ${includedItems.length} 条 Open Issues 生成的 brief 超过 24000 bytes（当前 ${byteLength} bytes），请缩小范围后重试。`,
+        errorCode: "brief_too_large",
+        retryable: true,
+      }));
+      return;
+    }
+
+    let resolvedProviderLabel = providerFallbackLabel("codex");
+
+    try {
+      const statuses = await loadProviderStatuses();
+      const codexStatus = statuses.find((status) => status.provider === "codex");
+      resolvedProviderLabel = codexStatus?.label ?? resolvedProviderLabel;
+      if (codexStatus && !codexStatus.available) {
+        upsertLocalBatchRunDetail(buildLocalFailedBatchRun(batchRun, {
+          message: `${resolvedProviderLabel} 当前不可用，请先检查系统安装或在 Settings 里修正 provider。`,
+          errorCode: "provider_unavailable",
+          retryable: true,
+        }));
+        return;
+      }
+    } catch (error) {
+      upsertLocalBatchRunDetail(buildLocalFailedBatchRun(batchRun, {
+        message: `无法确认 ${resolvedProviderLabel} 是否可用：${formatInvokeError(error)}`,
+        errorCode: "provider_unavailable",
+        retryable: true,
+      }));
+      return;
+    }
+
+    try {
+      await persistBatchWritePlan(batchRun, planQueuedBatchWrite(batchRun));
+    } catch (error) {
+      await reloadReviewState();
+      upsertLocalBatchRunDetail(buildLocalFailedBatchRun(batchRun, {
+        message: `批量任务写入本地状态失败：${formatInvokeError(error)}`,
+        errorCode: "persistence_failed",
+        retryable: true,
+      }));
+      setSelectedBatchRunId(batchRun.id);
+      return;
+    }
+
+    const runningPlan = planRunningBatchWrite({
+      batchRun,
+      items: includedItems,
+      providerLabel: resolvedProviderLabel,
+    });
+
+    try {
+      await persistBatchWritePlan(batchRun, runningPlan);
+    } catch (error) {
+      await reloadReviewState();
+      const message = `批量任务开始前，本地状态写入失败：${formatInvokeError(error)}`;
+      const overlay = buildLocalBatchFailureOverlay(batchRun, {
+        errorCode: "persistence_failed",
+        message,
+        retryable: true,
+      });
+      upsertLocalBatchFailureOverlay(overlay);
+      upsertLocalBatchRunDetail(buildLocalFailedBatchRun(runningPlan.batchRun, {
+        message,
+        errorCode: overlay.errorCode,
+        retryable: overlay.retryable,
+      }));
+      setSelectedBatchRunId(batchRun.id);
+      return;
+    }
+
+    let response: ApplyReviewBatchCommandResponse;
+
+    try {
+      response = await invoke<ApplyReviewBatchCommandResponse>("apply_review_batch", {
+        req: {
+          repo,
+          provider: "codex",
+          contextId: currentReviewContextId,
+          contextMode: mode,
+          workspaceMode: mode === "workspace" ? workspaceMode : null,
+          commitSha: mode === "commit" ? selectedCommit : null,
+          batchRunId: batchRun.id,
+          issueIds: batchRun.issueIds,
+          issueSnapshots: batchRun.issueSnapshots,
+          briefText: batchRun.briefText,
+        },
+      });
+    } catch (error) {
+      response = {
+        ok: false,
+        errorCode: "provider_execution_failed",
+        message: formatInvokeError(error),
+        retryable: true,
+      };
+    }
+
+    if (response.ok) {
+      const changedFiles = response.changedFiles ?? [];
+      const completedPlan = planCompletedBatchWrite({
+        batchRun: runningPlan.batchRun,
+        items: includedItems,
+        providerLabel: response.providerLabel ?? resolvedProviderLabel,
+        changedFiles,
+        summary: response.summary ?? "",
+      });
+
+      try {
+        await persistBatchWritePlan(batchRun, completedPlan);
+      } catch (error) {
+        await reloadReviewState();
+        const message = `批量任务已经执行完成，但本地状态同步失败：${formatInvokeError(error)}`;
+        const overlay = buildLocalBatchFailureOverlay(completedPlan.batchRun, {
+          errorCode: "orphaned_run",
+          message,
+          retryable: true,
+        });
+        upsertLocalBatchFailureOverlay(overlay);
+        upsertLocalBatchRunDetail(buildLocalFailedBatchRun(completedPlan.batchRun, {
+          message,
+          errorCode: overlay.errorCode,
+          retryable: overlay.retryable,
+        }));
+        setSelectedBatchRunId(batchRun.id);
+        return;
+      }
+
+      pendingFocusFilePathRef.current = changedFiles[0] ?? includedItems[0]?.filePath ?? null;
+      setSelectedBatchRunId(batchRun.id);
+
+      if (mode === "commit") {
+        setWorkspaceMode("all");
+        setMode("workspace");
+      } else if (workspaceMode !== "all") {
+        setWorkspaceMode("all");
+      } else {
+        await refreshCurrentContext();
+      }
+      return;
+    }
+
+    const failedPlan = planFailedBatchWrite({
+      batchRun: runningPlan.batchRun,
+      lastError: response.message?.trim() || response.providerStderr?.trim() || "Codex CLI 批量执行失败。",
+      errorCode: normalizeBatchRunErrorCode(response.errorCode),
+      retryable: response.retryable ?? true,
+    });
+
+    try {
+      await persistBatchWritePlan(batchRun, failedPlan);
+    } catch (error) {
+      await reloadReviewState();
+      const message = `批量任务已经返回失败，但本地状态同步失败：${formatInvokeError(error)}`;
+      const overlay = buildLocalBatchFailureOverlay(failedPlan.batchRun, {
+        errorCode: "orphaned_run",
+        message,
+        retryable: true,
+      });
+      upsertLocalBatchFailureOverlay(overlay);
+      upsertLocalBatchRunDetail(buildLocalFailedBatchRun(failedPlan.batchRun, {
+        message,
+        errorCode: overlay.errorCode,
+        retryable: overlay.retryable,
+      }));
+      setSelectedBatchRunId(batchRun.id);
+      return;
+    }
+
+    setSelectedBatchRunId(batchRun.id);
+  }
+
+  async function handleAskAiToFix(item: ReviewItem): Promise<void> {
+    if (item.status === "resolved" || item.status === "ai_editing") return;
+
+    const blockingState = resolveBatchRunBlockingState({
+      repoPath: item.repoPath,
+      contextId: item.contextId,
+      items: reviewItems,
+      batchRuns,
+      localFailures: localBatchFailures,
+    });
+    if (blockingState.blocked) return;
+
+    const initialLabel = currentProviderStatus?.label ?? providerFallbackLabel(aiProvider);
+    setReviewItemBusyAction({
+      itemId: item.id,
+      action: "ask_ai",
+      baseStatus: item.status,
+    });
+
+    try {
+      const statuses = await loadProviderStatuses();
+      const selectedStatus = statuses.find((status) => status.provider === aiProvider);
+      const resolvedLabel = selectedStatus?.label ?? initialLabel;
+
+      if (selectedStatus && !selectedStatus.available) {
+        throw new Error(`${resolvedLabel} 当前不可用，请先在 Settings 里切换 provider。`);
+      }
+
+      const { diff: reviewDiff } = await fetchReviewItemDiff(item);
+      if (reviewDiff.isBinary) {
+        throw new Error("Binary file review items are not supported for direct AI editing yet.");
+      }
+
+      setSelectedReviewItemId(item.id);
+      await updateReviewItem(item.id, buildReviewItemAiStartedPatch(item));
+
+      const response = await invoke<ApplyReviewItemResponse>("apply_review_item", {
+        req: {
+          repo,
+          provider: aiProvider,
+          contextMode: item.contextMode,
+          workspaceMode: item.workspaceMode,
+          commitSha: item.commitSha,
+          itemId: item.id,
+          filePath: item.filePath,
+          scopeType: item.scopeType,
+          startLine: item.startLine,
+          endLine: item.endLine,
+          title: item.title,
+          note: item.note,
+          fileOldContent: reviewDiff.oldContent ?? "",
+          fileNewContent: reviewDiff.newContent ?? "",
+        },
+      });
+
+      const changedFiles = response.changedFiles.length > 0 ? response.changedFiles : [item.filePath];
+      const completedAt = new Date().toISOString();
+
+      await updateReviewItem(item.id, buildReviewItemAiCompletedPatch(item, {
+        providerLabel: response.providerLabel,
+        changedFiles,
+        summary: response.summary,
+        at: completedAt,
+      }));
+
+      pendingFocusFilePathRef.current = changedFiles[0] ?? item.filePath;
+      setSelectedReviewItemId(item.id);
+
+      if (mode === "commit") {
+        setWorkspaceMode("all");
+        setMode("workspace");
+      } else if (workspaceMode !== "all") {
+        setWorkspaceMode("all");
+      } else {
+        await refreshCurrentContext();
+      }
+    } catch (error) {
+      await updateReviewItem(
+        item.id,
+        buildReviewItemAiFailedPatch(item, formatInvokeError(error)),
+      );
+    } finally {
+      setReviewItemBusyAction((current) => {
+        if (!current || current.itemId !== item.id) {
+          return current;
+        }
+        return null;
+      });
+    }
+  }
 
   const handleMenuAction = useCallback(
     async (menuAction: MenuAction) => {
@@ -990,10 +1978,12 @@ function App() {
           openPlaceholder("Surface Risks", "提取当前改动里最值得优先关注的风险点与潜在回归。");
           return;
         case "ai.suggest_fix":
-          if (selectedFile && diff) {
-            setFixSheetOpen(true);
+          if (selectedFile && selectedRange) {
+            openRangeReviewComposer();
+          } else if (selectedFile) {
+            openFileReviewComposer();
           } else {
-            openPlaceholder("Suggest Fix", "请先在侧边栏选择一个文件，然后再点击「修复建议」。");
+            openPlaceholder("Suggest Fix", "请先选择一个文件，或者在 diff 里框选行范围后再创建 review item。");
           }
           return;
         case "ai.draft_comment":
@@ -1034,7 +2024,7 @@ function App() {
       />
 
       {showProjectCenter && (
-        <section className="project-center-backdrop" onClick={() => setShowProjectCenter(false)}>
+        <section className="project-center-backdrop">
           <div
             className="project-center"
             onClick={(event) => event.stopPropagation()}
@@ -1052,10 +2042,11 @@ function App() {
               </button>
             </div>
 
-            <div className="project-center-body">
+            <div className="project-center-content">
               <label className="project-name-editor">
                 <span>{t("projectName")}</span>
                 <input
+                  ref={projectNameInputRef}
                   value={projectNameDraft}
                   onChange={(event) => setProjectNameDraft(event.currentTarget.value)}
                   placeholder={projectNameFromPath(repoDraft)}
@@ -1079,12 +2070,6 @@ function App() {
                   </button>
                 </div>
               </label>
-
-              <div className="project-center-actions">
-                <button type="button" className="primary" onClick={saveCurrentProject}>
-                  {currentPathProject ? t("updateProject") : t("saveProject")}
-                </button>
-              </div>
 
               <ul className="project-list">
                 {projects.map((item) => (
@@ -1122,6 +2107,21 @@ function App() {
               </ul>
 
               {projects.length === 0 && <p className="hint">{t("noProjects")}</p>}
+            </div>
+
+            <div className="project-center-foot">
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setShowProjectCenter(false)}
+              >
+                {t("close")}
+              </button>
+              <div className="project-center-foot-actions">
+                <button type="button" className="primary" onClick={saveCurrentProject}>
+                  {currentPathProject ? t("updateProject") : t("saveProject")}
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -1170,16 +2170,13 @@ function App() {
               {t("diffPreview")}
               {selectedFile && <span className="muted"> - {selectedFile.path}</span>}
             </h2>
-            {selectedFile && (
-              <button
-                type="button"
-                className="ghost small"
-                onClick={() => setFixSheetOpen(true)}
-                title="修复建议"
-              >
-                修复建议
-              </button>
-            )}
+            <div className="diff-head-actions">
+              {selectedRange && (
+                <span className="diff-selection-chip">
+                  已选 {selectedRange.startLine}-{selectedRange.endLine} 行
+                </span>
+              )}
+            </div>
           </div>
 
           {sidebarCollapsed && (
@@ -1222,6 +2219,7 @@ function App() {
                 original={diff.oldContent ?? ""}
                 modified={diff.newContent ?? ""}
                 theme="vs-dark"
+                onMount={handleDiffEditorMount}
                 options={{
                   readOnly: true,
                   renderSideBySide: true,
@@ -1229,11 +2227,75 @@ function App() {
                   minimap: { enabled: false },
                   wordWrap: "off",
                   scrollBeyondLastLine: false,
+                  fontSize: 12,
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                  lineNumbers: 'on',
+                  glyphMargin: false,
+                  folding: true,
+                  scrollbar: {
+                    vertical: 'visible',
+                    horizontal: 'visible',
+                    useShadows: false,
+                    verticalScrollbarSize: 10,
+                    horizontalScrollbarSize: 10,
+                  },
+                  renderOverviewRuler: false,
+                  hideCursorInOverviewRuler: true,
+                  overviewRulerBorder: false,
                 }}
               />
             </div>
           )}
         </section>
+
+        <aside className="review-pane">
+          {reviewPaneMode === "queue" ? (
+            <ReviewQueue
+              items={visibleReviewItems}
+              selectedFilePath={selectedFile?.path ?? null}
+              onSelectItem={(itemId) => {
+                setSelectedBatchRunId(null);
+                setSelectedReviewItemId(itemId);
+              }}
+              onCreateItem={() => {
+                setSelectedBatchRunId(null);
+                handlePrimaryCreateReviewItem();
+              }}
+              onSendOpenItems={() => void handleSendOpenIssuesToCodex()}
+              createActionLabel={queueFooterActions.create.label}
+              createActionDisabled={queueFooterActions.create.disabled}
+              sendOpenItemsLabel={queueFooterActions.sendOpen.label}
+              sendOpenItemsDisabled={queueFooterActions.sendOpen.disabled}
+            />
+          ) : reviewPaneMode === "detail" ? (
+            <ReviewItemDetail
+              item={selectedReviewItem}
+              provider={aiProvider}
+              aiBusy={
+                selectedReviewItemBlockingState.blocked
+                || selectedReviewItemBusyState.busyAction !== null
+              }
+              busyAction={selectedReviewItemBusyState.busyAction}
+              busyBaseStatus={selectedReviewItemBusyState.busyBaseStatus}
+              onBack={() => setSelectedReviewItemId(null)}
+              onAskAiToFix={(item) => void handleAskAiToFix(item)}
+              onEdit={openEditReviewItem}
+              onResolve={(item) => void handleResolveReviewItem(item)}
+              onReopen={(item) => void handleReopenReviewItem(item)}
+              onDelete={(item) => void handleDeleteReviewItem(item)}
+              onJumpToFile={handleJumpToReviewItem}
+            />
+          ) : (
+            <ReviewBatchRunDetail
+              batchRun={selectedBatchRun}
+              onBack={() => setSelectedBatchRunId(null)}
+              onJumpToIssue={(issueId) => {
+                setSelectedBatchRunId(null);
+                setSelectedReviewItemId(issueId);
+              }}
+            />
+          )}
+        </aside>
       </section>
       {placeholder && (
         <AiActionPlaceholder
@@ -1265,16 +2327,22 @@ function App() {
           onSelect={(provider) => void handleProviderSelect(provider)}
         />
       )}
-      {fixSheetOpen && selectedFile && diff && (
-        <FixSheet
-          repo={repo}
-          mode={mode}
-          commitSha={selectedCommit}
-          filePath={selectedFile.path}
-          fileOldContent={diff.oldContent ?? ""}
-          fileNewContent={diff.newContent ?? ""}
-          onClose={() => setFixSheetOpen(false)}
-        />
+      <ReviewItemComposer
+        draft={composerDraft}
+        mode={composerMode}
+        initialTitle={composerDraft?.title ?? editingReviewItem?.title ?? ""}
+        initialNote={composerDraft?.note ?? editingReviewItem?.note ?? ""}
+        onClose={closeReviewComposer}
+        onSubmit={handleComposerSubmit}
+      />
+      {reviewFeedbackToast && (
+        <div
+          className={`review-feedback-toast ${reviewFeedbackToast.kind}`}
+          role="status"
+          aria-live="polite"
+        >
+          {reviewFeedbackToast.message}
+        </div>
       )}
         </>
       )}

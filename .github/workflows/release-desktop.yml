@@ -1,0 +1,114 @@
+name: release-desktop
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  validate-release:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.release_meta.outputs.version }}
+      release_name: ${{ steps.release_meta.outputs.release_name }}
+      release_body: ${{ steps.release_meta.outputs.release_body }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Run desktop test suite
+        working-directory: apps/desktop
+        run: npm run test:desktop
+
+      - name: Resolve release metadata
+        id: release_meta
+        shell: bash
+        run: |
+          release_json=$(npm --prefix apps/desktop run --silent release:assert-version -- "$GITHUB_REF_NAME")
+          version=$(printf '%s' "$release_json" | node --input-type=module -e "let data=''; process.stdin.on('data', (chunk) => data += chunk); process.stdin.on('end', () => process.stdout.write(JSON.parse(data).version));")
+          notes_path=$(printf '%s' "$release_json" | node --input-type=module -e "let data=''; process.stdin.on('data', (chunk) => data += chunk); process.stdin.on('end', () => process.stdout.write(JSON.parse(data).releaseNotesPath));")
+
+          {
+            echo "version=$version"
+            echo "release_name=Review Editor v$version"
+            echo "release_body<<EOF_BODY"
+            cat "$notes_path"
+            echo
+            echo "---"
+            echo
+            echo "_This release was published from tag \\`$GITHUB_REF_NAME\\` and version-controlled notes in \\`$notes_path\\`._"
+            echo "EOF_BODY"
+          } >> "$GITHUB_OUTPUT"
+
+  publish-desktop:
+    needs: validate-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: windows-latest
+            args: ""
+          - platform: macos-15-intel
+            args: "--target x86_64-apple-darwin"
+          - platform: macos-14
+            args: "--target aarch64-apple-darwin"
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apps/desktop/src-tauri -> target
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Build and publish desktop bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: npm run tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: ${{ needs.validate-release.outputs.release_name }}
+          releaseBody: ${{ needs.validate-release.outputs.release_body }}
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
