@@ -96,12 +96,12 @@ The first version should include exactly two public routes:
 - `/` for homepage
 - `/download` for release downloads
 
-Optional localized route handling may add:
+Localized routing should add:
 
 - `/zh`
 - `/zh/download`
 
-but the first implementation should still conceptually remain a two-page site.
+This keeps the product conceptually as a two-page site while still giving each language a shareable URL.
 
 ### 6.2 Navigation
 
@@ -209,6 +209,18 @@ Examples:
 - Windows `.exe` and `.msi`
 - Linux `.AppImage`, `.deb`, `.rpm`
 
+The page should prefer installer-like assets in the main CTA hierarchy:
+
+- macOS: `.dmg` first
+- Windows: `.exe` first, `.msi` as alternate
+- Linux: `.AppImage` first, package-specific options as alternates
+
+Archive artifacts like `.app.tar.gz` should not be treated as the primary beginner-facing download CTA.
+They may appear under a secondary `Other artifacts` or `Advanced downloads` area.
+
+Raw release filenames must not define the marketing label shown to users.
+The UI should present normalized labels such as `macOS (Apple Silicon)` or `Windows Installer` even if the underlying asset filename still uses the current internal product name.
+
 ### 8.3 Release Metadata
 
 The page should also show:
@@ -246,6 +258,7 @@ Requirements:
 - both pages must be fully localized
 - language switch must be visible in header
 - the active language should persist across page navigation
+- language switch should navigate between the paired English and Chinese routes
 - localized copy should not rely on machine-translated placeholder phrasing
 
 The English copy should be treated as the canonical product voice for launch, with the Chinese version matching meaning and tone rather than word-for-word structure.
@@ -311,7 +324,19 @@ The site should not introduce SSR or a CMS in V1.
 
 Those would add complexity without solving the current product need.
 
-## 13. Release Data Integration
+## 13. Deployment Assumption
+
+The site should build as a static artifact that can be deployed on GitHub Pages-compatible hosting or any other static host later.
+
+Implementation requirements:
+
+- no backend server requirement for the core site
+- router and asset loading should tolerate a configurable base path
+- local development should still work without deployment-specific setup
+
+The first implementation does not need to finalize production hosting, but it should avoid choices that lock the site into one vendor-specific platform.
+
+## 14. Release Data Integration
 
 The download page should read GitHub release data at runtime from the repository's release API.
 
@@ -329,7 +354,7 @@ Graceful fallback behavior:
 
 The site must never display fake package cards for assets that are not present.
 
-## 14. Responsive Behavior
+## 15. Responsive Behavior
 
 Desktop is the primary storytelling surface, but mobile must still work cleanly.
 
@@ -341,7 +366,7 @@ Requirements:
 - download cards reflow into one column on mobile
 - language switching and CTA remain accessible without header overflow
 
-## 15. Non-Goals
+## 16. Non-Goals
 
 V1 should not include:
 
@@ -357,7 +382,7 @@ V1 should not include:
 
 Those can come later if needed.
 
-## 16. Testing Expectations
+## 17. Testing Expectations
 
 The final implementation should be verified against:
 
@@ -368,7 +393,7 @@ The final implementation should be verified against:
 - CTA routing between homepage and download page
 - asset classification correctness for macOS / Windows / Linux
 
-## 17. Success Criteria
+## 18. Success Criteria
 
 The first version is successful if:
 
@@ -378,7 +403,7 @@ The first version is successful if:
 - the site feels distinct enough to be remembered
 - the download page reflects real release artifacts without manual editing
 
-## 18. Open Naming Decision
+## 19. Open Naming Decision
 
 The visual and narrative design should proceed using a brand-forward working name in the `Signal Desk` family.
 
