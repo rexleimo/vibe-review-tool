@@ -20,6 +20,7 @@ import { type AiProvider, useAiProvider } from "./hooks/useAiProvider";
 import { type MenuAction, useMenuActions } from "./hooks/useMenuActions";
 import { useReviewState } from "./hooks/useReviewState";
 import { formatInvokeError } from "./lib/formatInvokeError";
+import { buildReviewComposerSuccessFeedback } from "./lib/reviewComposer";
 import {
   buildFailedBatchRunPatch,
   buildLocalOrphanedRunOverlay,
@@ -49,6 +50,10 @@ import {
   normalizeReviewRange,
 } from "./lib/reviewItems";
 import { applyReviewBatchWritePlan } from "./lib/reviewState";
+import {
+  resolveSelectedReviewItemBusyState,
+  type ReviewItemBusyActionOverlay,
+} from "./lib/reviewItemDetailLayout";
 import {
   resolveReviewPaneMode,
   resolveReviewPanePrimaryAction,
@@ -149,6 +154,11 @@ type ApplyReviewBatchCommandResponse = {
 type LineSelection = {
   startLine: number;
   endLine: number;
+};
+
+type ReviewFeedbackToastState = {
+  kind: "success" | "error";
+  message: string;
 };
 
 const PAGE_SIZE = 200;
@@ -476,11 +486,13 @@ function App() {
   const [selectedRange, setSelectedRange] = useState<LineSelection | null>(null);
   const [placeholder, setPlaceholder] = useState<PlaceholderState | null>(null);
   const [summarySheet, setSummarySheet] = useState<SummarySheetState | null>(null);
+  const [reviewFeedbackToast, setReviewFeedbackToast] = useState<ReviewFeedbackToastState | null>(null);
   const [composerDraft, setComposerDraft] = useState<CreateReviewItemInput | null>(null);
   const [composerMode, setComposerMode] = useState<"create" | "edit">("create");
   const [editingReviewItemId, setEditingReviewItemId] = useState<string | null>(null);
   const [selectedReviewItemId, setSelectedReviewItemId] = useState<string | null>(null);
   const [selectedBatchRunId, setSelectedBatchRunId] = useState<string | null>(null);
+  const [reviewItemBusyAction, setReviewItemBusyAction] = useState<ReviewItemBusyActionOverlay | null>(null);
   const [localBatchFailures, setLocalBatchFailures] = useState<ReviewBatchRunLocalOverlay[]>([]);
   const [localBatchRunDetails, setLocalBatchRunDetails] = useState<ReviewBatchRun[]>([]);
 
@@ -537,6 +549,14 @@ function App() {
   const selectedReviewItem = useMemo(
     () => reviewItems.find((item) => item.id === selectedReviewItemId) ?? null,
     [reviewItems, selectedReviewItemId],
+  );
+  const selectedReviewItemBusyState = useMemo(
+    () =>
+      resolveSelectedReviewItemBusyState({
+        selectedItemId: selectedReviewItemId,
+        overlay: reviewItemBusyAction,
+      }),
+    [reviewItemBusyAction, selectedReviewItemId],
   );
   const visibleOpenItems = useMemo(
     () => visibleReviewItems.filter((item) => item.status === "open"),
@@ -858,25 +878,73 @@ function App() {
     });
   }
 
-  async function handleSubmitReviewItem(payload: { title: string; note: string }): Promise<void> {
-    if (!composerDraft) return;
+  function closeReviewComposer(): void {
+    setComposerDraft(null);
+    setEditingReviewItemId(null);
+    setComposerMode("create");
+  }
+
+  async function handleSubmitReviewItem(payload: { title: string; note: string }): Promise<{
+    selectedReviewItemId: string;
+    toastMessage: string;
+  }> {
+    if (!composerDraft) {
+      throw new Error("missing review item draft");
+    }
+
     if (composerMode === "edit" && editingReviewItemId) {
       await updateReviewItem(editingReviewItemId, {
         title: payload.title,
         note: payload.note,
       });
-      setSelectedReviewItemId(editingReviewItemId);
-    } else {
-      const created = await createReviewItem({
-        ...composerDraft,
+      return buildReviewComposerSuccessFeedback({
+        mode: "edit",
+        itemId: editingReviewItemId,
+        title: payload.title,
+      });
+    }
+
+    const created = await createReviewItem({
+      ...composerDraft,
+      title: payload.title,
+      note: payload.note,
+    });
+
+    return buildReviewComposerSuccessFeedback({
+      mode: "create",
+      itemId: created.id,
+      title: payload.title,
+    });
+  }
+
+  async function handleComposerSubmit(payload: { title: string; note: string }): Promise<void> {
+    if (!composerDraft) return;
+
+    const draftSnapshot = composerDraft;
+    const modeSnapshot = composerMode;
+    const editingReviewItemIdSnapshot = editingReviewItemId;
+
+    try {
+      const feedback = await handleSubmitReviewItem(payload);
+      setSelectedBatchRunId(null);
+      setSelectedReviewItemId(feedback.selectedReviewItemId);
+      setReviewFeedbackToast({
+        kind: "success",
+        message: feedback.toastMessage,
+      });
+    } catch (error) {
+      setComposerDraft({
+        ...draftSnapshot,
         title: payload.title,
         note: payload.note,
       });
-      setSelectedReviewItemId(created.id);
+      setEditingReviewItemId(editingReviewItemIdSnapshot);
+      setComposerMode(modeSnapshot);
+      setReviewFeedbackToast({
+        kind: "error",
+        message: `保存 Review Item 失败：${formatInvokeError(error)}`,
+      });
     }
-    setComposerDraft(null);
-    setEditingReviewItemId(null);
-    setComposerMode("create");
   }
 
   async function generateReviewSummary(): Promise<void> {
@@ -1280,6 +1348,7 @@ function App() {
     setEditingReviewItemId(null);
     setSelectedReviewItemId(null);
     setSelectedBatchRunId(null);
+    setReviewItemBusyAction(null);
     setLocalBatchFailures([]);
     setLocalBatchRunDetails([]);
     setShowProviderSettings(false);
@@ -1362,6 +1431,14 @@ function App() {
       setSelectedReviewItemId(null);
     }
   }, [selectedReviewItem, selectedReviewItemId]);
+
+  useEffect(() => {
+    if (!reviewFeedbackToast) return;
+    const timeoutId = window.setTimeout(() => {
+      setReviewFeedbackToast(null);
+    }, 2200);
+    return () => window.clearTimeout(timeoutId);
+  }, [reviewFeedbackToast]);
 
   useEffect(() => {
     if (selectedBatchRunId !== null && selectedBatchRun === null) {
@@ -1767,6 +1844,11 @@ function App() {
     if (blockingState.blocked) return;
 
     const initialLabel = currentProviderStatus?.label ?? providerFallbackLabel(aiProvider);
+    setReviewItemBusyAction({
+      itemId: item.id,
+      action: "ask_ai",
+      baseStatus: item.status,
+    });
 
     try {
       const statuses = await loadProviderStatuses();
@@ -1830,6 +1912,13 @@ function App() {
         item.id,
         buildReviewItemAiFailedPatch(item, formatInvokeError(error)),
       );
+    } finally {
+      setReviewItemBusyAction((current) => {
+        if (!current || current.itemId !== item.id) {
+          return current;
+        }
+        return null;
+      });
     }
   }
 
@@ -2182,7 +2271,12 @@ function App() {
             <ReviewItemDetail
               item={selectedReviewItem}
               provider={aiProvider}
-              aiBusy={selectedReviewItemBlockingState.blocked}
+              aiBusy={
+                selectedReviewItemBlockingState.blocked
+                || selectedReviewItemBusyState.busyAction !== null
+              }
+              busyAction={selectedReviewItemBusyState.busyAction}
+              busyBaseStatus={selectedReviewItemBusyState.busyBaseStatus}
               onBack={() => setSelectedReviewItemId(null)}
               onAskAiToFix={(item) => void handleAskAiToFix(item)}
               onEdit={openEditReviewItem}
@@ -2236,15 +2330,20 @@ function App() {
       <ReviewItemComposer
         draft={composerDraft}
         mode={composerMode}
-        initialTitle={editingReviewItem?.title ?? ""}
-        initialNote={editingReviewItem?.note ?? ""}
-        onClose={() => {
-          setComposerDraft(null);
-          setEditingReviewItemId(null);
-          setComposerMode("create");
-        }}
-        onSubmit={handleSubmitReviewItem}
+        initialTitle={composerDraft?.title ?? editingReviewItem?.title ?? ""}
+        initialNote={composerDraft?.note ?? editingReviewItem?.note ?? ""}
+        onClose={closeReviewComposer}
+        onSubmit={handleComposerSubmit}
       />
+      {reviewFeedbackToast && (
+        <div
+          className={`review-feedback-toast ${reviewFeedbackToast.kind}`}
+          role="status"
+          aria-live="polite"
+        >
+          {reviewFeedbackToast.message}
+        </div>
+      )}
         </>
       )}
     </main>

@@ -36,6 +36,17 @@ export interface ResolveReviewItemDetailSectionsInput {
   hasLastError: boolean;
 }
 
+export interface ReviewItemBusyActionOverlay {
+  itemId: string;
+  action: "ask_ai";
+  baseStatus: ReviewItemDetailFooterBaseStatus;
+}
+
+export interface ResolveSelectedReviewItemBusyStateInput {
+  selectedItemId: string | null;
+  overlay: ReviewItemBusyActionOverlay | null;
+}
+
 function resolveFooterBaseStatus({
   status,
   busyBaseStatus,
@@ -170,4 +181,24 @@ export function resolveReviewItemDetailSections(
   }
 
   return sections;
+}
+
+export function resolveSelectedReviewItemBusyState(
+  input: ResolveSelectedReviewItemBusyStateInput,
+): {
+  busyAction: ReviewItemDetailActionKind | null;
+  busyBaseStatus: ReviewItemDetailFooterBaseStatus | null;
+} {
+  const { selectedItemId, overlay } = input;
+  if (!selectedItemId || !overlay || overlay.itemId !== selectedItemId) {
+    return {
+      busyAction: null,
+      busyBaseStatus: null,
+    };
+  }
+
+  return {
+    busyAction: overlay.action,
+    busyBaseStatus: overlay.baseStatus,
+  };
 }

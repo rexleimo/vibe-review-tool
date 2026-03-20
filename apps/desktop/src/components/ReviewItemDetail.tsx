@@ -1,8 +1,11 @@
+import { Fragment, type ReactNode } from "react";
 import { type AiProvider } from "../hooks/useAiProvider";
+import type { ReviewItemDetailAction, ReviewItemDetailActionKind } from "../lib/reviewItemActions";
 import {
-  resolveReviewItemDetailActions,
-  type ReviewItemDetailAction,
-} from "../lib/reviewItemActions";
+  resolveReviewItemDetailFooter,
+  resolveReviewItemDetailSections,
+  type ReviewItemDetailSectionKey,
+} from "../lib/reviewItemDetailLayout";
 import {
   type ReviewItem,
   getReviewItemScopeLabel,
@@ -14,6 +17,8 @@ interface ReviewItemDetailProps {
   item: ReviewItem | null;
   provider: AiProvider;
   aiBusy: boolean;
+  busyAction: ReviewItemDetailActionKind | null;
+  busyBaseStatus: "open" | "needs_review" | null;
   onBack: () => void;
   onAskAiToFix: (item: ReviewItem) => void;
   onEdit: (item: ReviewItem) => void;
@@ -39,13 +44,28 @@ function providerLabel(provider: AiProvider): string {
 function statusLabel(status: ReviewItem["status"]): string {
   switch (status) {
     case "open":
-      return "Open";
+      return "待处理";
     case "ai_editing":
-      return "AI Editing";
+      return "AI 修改中";
     case "needs_review":
-      return "Needs Review";
+      return "待复审";
     case "resolved":
-      return "Resolved";
+      return "已解决";
+  }
+}
+
+function contextLabel(item: ReviewItem): string {
+  if (item.contextMode === "commit") {
+    return item.commitSha ? `Commit · ${item.commitSha.slice(0, 7)}` : "Commit Review";
+  }
+
+  switch (item.workspaceMode ?? "all") {
+    case "staged":
+      return "Workspace · staged";
+    case "unstaged":
+      return "Workspace · unstaged";
+    default:
+      return "Workspace · all";
   }
 }
 
@@ -55,10 +75,91 @@ function formatTimelineAt(value: string): string {
   return date.toLocaleString();
 }
 
+function renderFooterActionLabel(action: { action: ReviewItemDetailActionKind; label: string; loading?: boolean }): string {
+  if (!action.loading) return action.label;
+  if (action.action === "ask_ai") return "继续处理中...";
+  return "处理中...";
+}
+
+function buildSectionMap(item: ReviewItem, timeline: ReturnType<typeof getReviewItemTimeline>): Record<ReviewItemDetailSectionKey, ReactNode> {
+  return {
+    reviewer_note: (
+      <div className="review-item-section">
+        <div className="review-item-section-heading">
+          <span className="review-item-section-label">Reviewer Note</span>
+        </div>
+        <div className="review-item-rich-block">
+          <p className="review-item-note">{item.note}</p>
+        </div>
+      </div>
+    ),
+    last_error: (
+      <div className="review-item-section review-item-section-warning">
+        <div className="review-item-section-heading">
+          <span className="review-item-section-label">Last Error</span>
+          <span className="review-item-section-meta">需要先确认失败原因</span>
+        </div>
+        <pre className="review-item-warning-block">{item.lastError}</pre>
+      </div>
+    ),
+    ai_summary: (
+      <div className="review-item-section">
+        <div className="review-item-section-heading">
+          <span className="review-item-section-label">AI Summary</span>
+        </div>
+        <div className="review-item-rich-block">
+          <pre>{item.lastRunSummary}</pre>
+        </div>
+      </div>
+    ),
+    changed_files: (
+      <div className="review-item-section">
+        <div className="review-item-section-heading">
+          <span className="review-item-section-label">Changed Files</span>
+          <span className="review-item-section-meta">{item.changedFiles.length} files</span>
+        </div>
+        {item.changedFiles.length === 0 ? (
+          <p className="review-item-empty">最近一次执行还没有记录变更文件。</p>
+        ) : (
+          <ul className="review-item-file-pills">
+            {item.changedFiles.map((changedFile) => (
+              <li key={changedFile}>{changedFile}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+    ),
+    timeline: (
+      <div className="review-item-section">
+        <div className="review-item-section-heading">
+          <span className="review-item-section-label">Timeline</span>
+        </div>
+        {timeline.length === 0 ? (
+          <p className="review-item-empty">这个 item 还没有可展示的关键事件。</p>
+        ) : (
+          <ol className="review-item-timeline">
+            {timeline.map((entry) => (
+              <li key={entry.id} className="review-item-timeline-entry">
+                <div className="review-item-timeline-dot" aria-hidden="true" />
+                <div className="review-item-timeline-content">
+                  <strong>{entry.summary}</strong>
+                  <time dateTime={entry.at}>{formatTimelineAt(entry.at)}</time>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    ),
+  };
+}
+
 export function ReviewItemDetail({
   item,
   provider,
   aiBusy,
+  busyAction,
+  busyBaseStatus,
   onBack,
   onAskAiToFix,
   onEdit,
@@ -77,13 +178,24 @@ export function ReviewItemDetail({
   }
 
   const currentItem = item;
-  const isItemEditing = item.status === "ai_editing";
+  const currentProviderLabel = providerLabel(provider);
   const timeline = getReviewItemTimeline(item.history ?? []);
-  const detailActions = resolveReviewItemDetailActions({
+  const detailFooter = resolveReviewItemDetailFooter({
     status: currentItem.status,
-    aiBusy,
-    providerLabel: providerLabel(provider),
+    busyBaseStatus,
+    providerLabel: currentProviderLabel,
+    busy: aiBusy,
+    busyAction,
   });
+  const sectionOrder = resolveReviewItemDetailSections({
+    status: currentItem.status,
+    hasReviewerNote: currentItem.note.trim().length > 0,
+    hasAiSummary: currentItem.lastRunSummary.trim().length > 0,
+    hasChangedFiles: currentItem.changedFiles.length > 0 || currentItem.status !== "open",
+    hasTimeline: true,
+    hasLastError: currentItem.lastError.trim().length > 0,
+  });
+  const sectionMap = buildSectionMap(currentItem, timeline);
 
   function runAction(action: ReviewItemDetailAction): void {
     switch (action.action) {
@@ -109,125 +221,57 @@ export function ReviewItemDetail({
     <section className="review-item-detail">
       <div className="review-item-detail-head">
         <div className="review-item-detail-topbar">
-          <button type="button" className="ghost small review-item-back" onClick={onBack}>
-            返回队列
-          </button>
-          <span className={`review-item-status ${item.status}`}>{statusLabel(item.status)}</span>
-        </div>
-        <h3>{item.title}</h3>
-        <div className="review-item-detail-actions-inline">
-          <button type="button" className="ghost small" onClick={() => onJumpToFile(item)}>
+          <div className="review-item-detail-topbar-left">
+            <button type="button" className="ghost small review-item-back" onClick={onBack}>
+              返回队列
+            </button>
+            <span className={`review-item-status ${item.status}`}>{statusLabel(item.status)}</span>
+          </div>
+          <button type="button" className="ghost small review-item-jump" onClick={() => onJumpToFile(item)}>
             跳到代码
           </button>
+        </div>
+
+        <div className="review-item-title-block">
+          <h3>{item.title}</h3>
+          <div className="review-item-context-strip">
+            <span className="review-item-context-path" title={item.filePath}>{item.filePath}</span>
+            <span>{getReviewItemScopeLabel(item)}</span>
+            <span>{contextLabel(item)}</span>
+          </div>
         </div>
       </div>
 
       <div className="review-item-detail-body">
-        <div className="review-item-meta-grid">
-          <div className="review-item-meta-card">
-            <span>Scope</span>
-            <strong>{getReviewItemScopeLabel(item)}</strong>
-          </div>
-          <div className="review-item-meta-card">
-            <span>Status</span>
-            <strong>{statusLabel(item.status)}</strong>
-          </div>
-          <div className="review-item-meta-card">
-            <span>Context</span>
-            <strong>{item.contextMode === "commit" ? "Commit Review" : "Workspace Review"}</strong>
-          </div>
-        </div>
-
-        <div className="review-item-section">
-          <span className="review-item-section-label">File</span>
-          <button
-            type="button"
-            className="review-item-file-link"
-            title={item.filePath}
-            onClick={() => onJumpToFile(item)}
-          >
-            {item.filePath}
-          </button>
-        </div>
-
-        {item.note && (
-          <div className="review-item-section">
-            <span className="review-item-section-label">Reviewer Note</span>
-            <div className="review-item-rich-block">
-              <p className="review-item-note">{item.note}</p>
-            </div>
-          </div>
-        )}
-
-        {item.lastError && (
-          <div className="review-item-section danger">
-            <span className="review-item-section-label">Last Error</span>
-            <pre>{item.lastError}</pre>
-          </div>
-        )}
-
-        {item.lastRunSummary && (
-          <div className="review-item-section">
-            <span className="review-item-section-label">Last AI Summary</span>
-            <div className="review-item-rich-block">
-              <pre>{item.lastRunSummary}</pre>
-            </div>
-          </div>
-        )}
-
-        <div className="review-item-section">
-          <span className="review-item-section-label">Changed Files</span>
-          {item.changedFiles.length === 0 ? (
-            <p className="review-item-empty">最近一次执行还没有记录变更文件。</p>
-          ) : (
-            <ul className="review-item-file-pills">
-              {item.changedFiles.map((changedFile) => (
-                <li key={changedFile}>{changedFile}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div className="review-item-section">
-          <span className="review-item-section-label">Timeline</span>
-          {timeline.length === 0 ? (
-            <p className="review-item-empty">这个 item 还没有可展示的关键事件。</p>
-          ) : (
-            <ol className="review-item-timeline">
-              {timeline.map((entry) => (
-                <li key={entry.id} className="review-item-timeline-entry">
-                  <div className="review-item-timeline-dot" aria-hidden="true" />
-                  <div className="review-item-timeline-content">
-                    <strong>{entry.summary}</strong>
-                    <time dateTime={entry.at}>{formatTimelineAt(entry.at)}</time>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          )}
-        </div>
+        {sectionOrder.map((key) => (
+          <Fragment key={key}>{sectionMap[key]}</Fragment>
+        ))}
       </div>
 
-      <div className="review-item-actions">
-        <button
-          type="button"
-          className="primary"
-          disabled={isItemEditing ? true : detailActions.primary.disabled}
-          onClick={() => runAction(detailActions.primary)}
-        >
-          {isItemEditing ? `${providerLabel(provider)} Working...` : detailActions.primary.label}
-        </button>
-        {detailActions.secondary.map((action) => (
+      <div className="review-item-detail-footer">
+        <div className="review-item-footer-actions">
           <button
-            key={action.action}
             type="button"
-            className={action.tone === "danger" ? "ghost danger" : "ghost"}
-            disabled={isItemEditing ? true : action.disabled}
-            onClick={() => runAction(action)}
+            className="primary review-item-footer-action review-item-footer-action-primary"
+            disabled={detailFooter.primary.disabled}
+            aria-busy={detailFooter.primary.loading === true}
+            onClick={() => runAction(detailFooter.primary)}
           >
-            {action.label}
+            {renderFooterActionLabel(detailFooter.primary)}
           </button>
-        ))}
+          {detailFooter.secondary.map((action) => (
+            <button
+              key={action.action}
+              type="button"
+              className={`review-item-footer-action ${action.tone === "danger" ? "ghost danger" : "ghost"}`}
+              disabled={action.disabled}
+              aria-busy={action.loading === true}
+              onClick={() => runAction(action)}
+            >
+              {renderFooterActionLabel(action)}
+            </button>
+          ))}
+        </div>
       </div>
     </section>
   );

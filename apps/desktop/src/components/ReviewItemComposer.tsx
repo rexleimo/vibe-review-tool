@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { type CreateReviewItemInput, getReviewItemScopeLabel } from "../lib/reviewItems";
+import { submitReviewItemComposer } from "../lib/reviewComposer";
 import "./ReviewItemComposer.css";
 
 interface ReviewItemComposerProps {
@@ -58,15 +59,20 @@ export function ReviewItemComposer({
   if (!draft) return null;
 
   async function handleSubmit(): Promise<void> {
-    if (!title.trim()) return;
+    if (submitting) return;
     setSubmitting(true);
     try {
-      await onSubmit({
-        title: title.trim(),
-        note: note.trim(),
+      const submitted = await submitReviewItemComposer({
+        title,
+        note,
+        onClose,
+        onSubmit,
       });
+      if (!submitted) {
+        setSubmitting(false);
+      }
     } finally {
-      setSubmitting(false);
+      // The composer usually unmounts immediately after a valid submit.
     }
   }
 

@@ -34,6 +34,7 @@ import {
 import {
   resolveReviewItemDetailFooter,
   resolveReviewItemDetailSections,
+  resolveSelectedReviewItemBusyState,
 } from "../.tmp-tests/reviewItemDetailLayout.js";
 import {
   buildReviewComposerSuccessFeedback,
@@ -585,6 +586,40 @@ test("resolveReviewItemDetailSections hides empty AI/result blocks for open item
       hasLastError: false,
     }),
     ["reviewer_note", "timeline"],
+  );
+});
+
+test("resolveSelectedReviewItemBusyState returns ask_ai overlay for the selected item", () => {
+  assert.deepEqual(
+    resolveSelectedReviewItemBusyState({
+      selectedItemId: "ri_1",
+      overlay: {
+        itemId: "ri_1",
+        action: "ask_ai",
+        baseStatus: "needs_review",
+      },
+    }),
+    {
+      busyAction: "ask_ai",
+      busyBaseStatus: "needs_review",
+    },
+  );
+});
+
+test("resolveSelectedReviewItemBusyState ignores overlays for other items", () => {
+  assert.deepEqual(
+    resolveSelectedReviewItemBusyState({
+      selectedItemId: "ri_2",
+      overlay: {
+        itemId: "ri_1",
+        action: "ask_ai",
+        baseStatus: "open",
+      },
+    }),
+    {
+      busyAction: null,
+      busyBaseStatus: null,
+    },
   );
 });
 

@@ -753,6 +753,34 @@ input::placeholder {
 .accent-2 { color: var(--accent-green); }
 .danger { color: var(--accent-red); }
 
+.review-feedback-toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 90;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border-light);
+  background: rgba(20, 20, 26, 0.94);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.review-feedback-toast.success {
+  border-color: rgba(48, 209, 88, 0.28);
+  box-shadow: 0 8px 30px rgba(48, 209, 88, 0.12);
+}
+
+.review-feedback-toast.error {
+  border-color: rgba(255, 69, 58, 0.28);
+  box-shadow: 0 8px 30px rgba(255, 69, 58, 0.14);
+}
+
 .ai-placeholder-backdrop {
   position: fixed;
   inset: 0;
