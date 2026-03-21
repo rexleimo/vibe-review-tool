@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildLocalePath, publicRoutePaths } from "../src/lib/routes.ts";
+import { buildLanguageSwitchTarget, buildLocalePath, primaryNavIds, publicRoutePaths } from "../src/lib/routes.ts";
 
 test("buildLocalePath maps download route in Chinese", () => {
   assert.equal(buildLocalePath({ locale: "zh", page: "download" }), "/zh/download");
@@ -8,4 +8,12 @@ test("buildLocalePath maps download route in Chinese", () => {
 
 test("route table includes four public localized routes", () => {
   assert.deepEqual(publicRoutePaths, ["/", "/download", "/zh", "/zh/download"]);
+});
+
+test("header nav exposes the expected anchors", () => {
+  assert.deepEqual(primaryNavIds, ["workflow", "why-it-works", "download"]);
+});
+
+test("language toggle can compute the paired route", () => {
+  assert.equal(buildLanguageSwitchTarget("/download"), "/zh/download");
 });

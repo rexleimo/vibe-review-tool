@@ -1,5 +1,11 @@
-.app-shell {
+.site-shell {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-shell {
+  flex: 1;
   display: grid;
   place-items: center;
   padding: 48px 20px;
