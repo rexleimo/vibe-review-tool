@@ -1,0 +1,17 @@
+:root {
+  color-scheme: light;
+  --paper: #f6efe4;
+  --ink: #171412;
+  --accent: #b23928;
+  --card: #fff8ee;
+  --line: rgba(23, 20, 18, 0.12);
+  --muted: #5d5349;
+  font-family: "Georgia", "Times New Roman", serif;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+body {
+  background: radial-gradient(circle at top, #fbf5ec 0%, var(--paper) 45%, #ecdcc3 100%);
+  color: var(--ink);
+}

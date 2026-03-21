@@ -1,0 +1,10 @@
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 48px 20px;
+}
+
+.hero-card {
+  width: min(720px, 100%);
+}
