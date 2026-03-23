@@ -6,6 +6,8 @@ The current desktop shell includes:
 
 - native macOS product menus
 - an integrated Arc-inspired titlebar with review-context-first hierarchy
+- a comment-centric review queue for file-level and range-level review items
+- direct AI workspace edits routed through review items, then returned to `Needs Review`
 
 ## Final GUI Artifact
 
@@ -21,9 +23,11 @@ Built desktop deliverables:
 3. Use `Review` to switch between commit review and workspace review.
 4. Open `Review Editor -> Settings...` to choose the default AI provider (`codex`, `claude`, `gemini`, or `opencode`).
 5. Use `AI -> Generate Review Summary` or the titlebar AI entry to generate a real summary for the current commit/workspace context.
-6. The other AI menu items currently remain product placeholders.
-7. Inspect diffs in the split editor and switch files from the sidebar.
-8. Use the integrated titlebar to keep current file / commit context visible while reviewing.
+6. Create a file-level review item from the changed-files sidebar, or create a range-level item from a Monaco diff selection.
+7. Select the item in the right-side `Review Queue` and run `Ask <provider> To Fix` to let the AI client edit the workspace directly.
+8. After the run, the item moves to `Needs Review` and records the changed files and last AI summary.
+9. Inspect diffs in the split editor and switch files from the sidebar.
+10. Use the integrated titlebar to keep current file / commit context visible while reviewing.
 
 ## Dev Commands
 
@@ -60,3 +64,11 @@ The engine scans `git diff --cached` and applies:
 - `line-too-long`
 - `trailing-whitespace`
 - `changed-source-without-changed-tests`
+
+## Legacy Markdown CLI Rules
+
+The bootstrap CLI (`python3 -m review_editor.cli <markdown_file>`) analyzes markdown text with:
+
+- `line-too-long`
+- `trailing-whitespace`
+- `heading-structure` (flags heading level jumps, such as `#` directly to `###`)

@@ -33,6 +33,28 @@ class ReviewEditorCliTests(unittest.TestCase):
         self.assertEqual(payload["issues"][0]["rule"], "line-too-long")
         self.assertEqual(payload["issues"][0]["line"], 2)
 
+    def test_reports_trailing_whitespace(self) -> None:
+        result = self.run_cli("# Title\nline with trailing spaces   \n")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        payload = json.loads(result.stdout)
+
+        self.assertIn("issues", payload)
+        self.assertEqual(len(payload["issues"]), 1)
+        self.assertEqual(payload["issues"][0]["rule"], "trailing-whitespace")
+        self.assertEqual(payload["issues"][0]["line"], 2)
+
+    def test_reports_heading_structure_jump(self) -> None:
+        result = self.run_cli("# Title\n### Skipped level\n")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        payload = json.loads(result.stdout)
+
+        self.assertIn("issues", payload)
+        self.assertEqual(len(payload["issues"]), 1)
+        self.assertEqual(payload["issues"][0]["rule"], "heading-structure")
+        self.assertEqual(payload["issues"][0]["line"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
