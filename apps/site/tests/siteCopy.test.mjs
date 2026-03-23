@@ -11,3 +11,17 @@ test("brand strings stay centralized", () => {
   assert.ok(brand.productName.length > 0);
   assert.ok(brand.tagline.en.length > 0);
 });
+
+test("home copy includes workflow steps for both locales", () => {
+  assert.equal(siteCopy.en.home.workflow.steps.length, 4);
+  assert.equal(siteCopy.zh.home.workflow.steps.length, 4);
+});
+
+test("home copy names supported AI clients", () => {
+  assert.deepEqual(siteCopy.en.home.aiClients, ["Codex", "Claude", "Gemini"]);
+});
+
+test("download copy defines macOS, Windows, and Linux labels in both locales", () => {
+  assert.equal(siteCopy.en.download.platforms.length, 3);
+  assert.equal(siteCopy.zh.download.platforms.length, 3);
+});

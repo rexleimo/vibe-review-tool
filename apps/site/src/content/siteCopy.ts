@@ -1,28 +1,208 @@
 export const siteCopy = {
   en: {
     home: {
+      labels: {
+        desktopPreview: "Desktop Preview",
+        workflow: "Workflow",
+        whyItWorks: "Why It Works",
+        aiClients: "AI Clients",
+        download: "Download",
+      },
       hero: {
         eyebrow: "Professional AI code review, with judgment.",
         title: "Review issues like an editor. Dispatch fixes to AI. Review again before merge.",
         body: "Signal Desk keeps human judgment in the loop while letting AI clients execute concrete fixes.",
+        primary: "Download builds",
+        secondary: "See the workflow",
+      },
+      preview: {
+        title: "Review queue, diff view, and AI dispatch in one desktop surface.",
+        body: "Built for reviewers who want explicit issues, direct AI execution, and a final human pass before merge.",
+      },
+      workflow: {
+        title: "A disciplined loop for AI-native code review.",
+        steps: [
+          "Capture issue",
+          "Dispatch to AI client",
+          "AI edits workspace",
+          "Review again before merge",
+        ],
+      },
+      whyItWorks: {
+        title: "Why it works",
+        points: [
+          "Review items stay explicit instead of disappearing into chat history.",
+          "AI can edit quickly without taking control away from the reviewer.",
+          "Every run returns to a review state before merge.",
+          "Desktop focus keeps the review loop out of tab sprawl.",
+        ],
+      },
+      aiClients: ["Codex", "Claude", "Gemini"],
+      cta: {
+        title: "Get the desktop app.",
+        body: "Choose the right build for your platform and start reviewing with structure.",
+        primary: "Download builds",
       },
     },
     download: {
+      eyebrow: "Download",
       title: "Choose your platform.",
       intro: "Download the latest desktop build for macOS, Windows, or Linux.",
+      platforms: [
+        {
+          id: "macos",
+          title: "macOS",
+          description: "Disk images for Apple Silicon and Intel Macs.",
+        },
+        {
+          id: "windows",
+          title: "Windows",
+          description: "Installer-first downloads with MSI available as an alternate.",
+        },
+        {
+          id: "linux",
+          title: "Linux",
+          description: "AppImage first, with distro packages available when published.",
+        },
+      ],
+      states: {
+        loadingLabel: "Loading",
+        loadingTitle: "Loading the latest release.",
+        loadingBody: "Checking GitHub Releases for the newest desktop bundles.",
+        errorLabel: "Fallback",
+        errorTitle: "Could not load release assets.",
+        errorBody: "GitHub may be rate limiting, unavailable, or the release payload may be malformed.",
+        errorCta: "Open Releases on GitHub",
+        emptyLabel: "Pending",
+        emptyTitle: "No downloadable assets are published yet.",
+        emptyBody: "The latest release exists, but it does not expose installable desktop bundles yet.",
+      },
+      releaseMeta: {
+        title: "Release metadata",
+        versionLabel: "Version",
+        publishedLabel: "Published",
+        sourceLabel: "Source of truth",
+        sourceValue: "GitHub Releases",
+        notesLabel: "Release notes",
+        notesCta: "Read the release entry",
+        checksumLabel: "Verification",
+        checksumPending: "Checksum links are not published yet. GitHub Releases is the current source of truth.",
+        liveNote: "Live release data loaded from GitHub.",
+        cacheNote: "Showing the most recent release data cached in this browser.",
+        snapshotNote: "Showing the bundled release snapshot because live GitHub data is unavailable.",
+      },
+      groups: {
+        primaryLabel: "Primary download",
+        alternatesLabel: "Other installers",
+        advancedLabel: "Advanced downloads",
+      },
+      advancedDownloadsLabel: "Advanced downloads",
+    },
+    footer: {
+      body: "Human-led review. AI-executed fixes. Desktop-first workflow.",
     },
   },
   zh: {
     home: {
+      labels: {
+        desktopPreview: "桌面预览",
+        workflow: "工作流",
+        whyItWorks: "为什么这样更专业",
+        aiClients: "AI 客户端",
+        download: "下载",
+      },
       hero: {
         eyebrow: "专业 AI 代码审阅，保留判断力。",
         title: "像编辑一样提出问题，把修复派发给 AI，再在合并前复审。",
         body: "Signal Desk 让人类保持审阅主导权，同时让 AI 客户端执行明确的修复任务。",
+        primary: "下载版本",
+        secondary: "查看工作流",
+      },
+      preview: {
+        title: "把 review queue、diff 视图和 AI 派发放进同一个桌面工作台。",
+        body: "适合需要显式问题项、直接 AI 执行，以及合并前最终人工复审的团队。",
+      },
+      workflow: {
+        title: "面向 AI 原生工程团队的审阅闭环。",
+        steps: [
+          "记录问题",
+          "派发给 AI 客户端",
+          "AI 修改工作区",
+          "合并前再次复审",
+        ],
+      },
+      whyItWorks: {
+        title: "为什么这样更专业",
+        points: [
+          "问题项保持显式，不会淹没在聊天记录里。",
+          "AI 可以快速执行，但不会夺走审阅者的控制权。",
+          "每次执行都会回到需要复审的状态。",
+          "桌面工作台让审阅流程不再散落在一堆标签页里。",
+        ],
+      },
+      aiClients: ["Codex", "Claude", "Gemini"],
+      cta: {
+        title: "获取桌面应用。",
+        body: "为你的平台选择合适的构建，开始更有结构的审阅流程。",
+        primary: "下载版本",
       },
     },
     download: {
+      eyebrow: "下载",
       title: "选择你的平台。",
       intro: "下载适用于 macOS、Windows 或 Linux 的最新桌面版本。",
+      platforms: [
+        {
+          id: "macos",
+          title: "macOS",
+          description: "为 Apple Silicon 和 Intel Mac 提供磁盘镜像。",
+        },
+        {
+          id: "windows",
+          title: "Windows",
+          description: "优先提供安装包，并保留 MSI 作为备用选项。",
+        },
+        {
+          id: "linux",
+          title: "Linux",
+          description: "优先提供 AppImage，并在发布时展示发行版包。",
+        },
+      ],
+      states: {
+        loadingLabel: "加载中",
+        loadingTitle: "正在加载最新发布。",
+        loadingBody: "正在从 GitHub Releases 获取最新桌面安装包。",
+        errorLabel: "回退",
+        errorTitle: "暂时无法加载发布资产。",
+        errorBody: "可能是 GitHub 限流、服务异常，或 release 数据结构不符合预期。",
+        errorCta: "前往 GitHub Releases",
+        emptyLabel: "待发布",
+        emptyTitle: "当前还没有可下载的桌面安装包。",
+        emptyBody: "最新 release 已发布，但暂时没有可安装的桌面构建产物。",
+      },
+      releaseMeta: {
+        title: "发布信息",
+        versionLabel: "版本",
+        publishedLabel: "发布时间",
+        sourceLabel: "权威来源",
+        sourceValue: "GitHub Releases",
+        notesLabel: "发布说明",
+        notesCta: "查看发布条目",
+        checksumLabel: "校验信息",
+        checksumPending: "当前还未发布 checksum 链接，GitHub Releases 是现阶段的权威来源。",
+        liveNote: "当前显示的是来自 GitHub 的实时发布数据。",
+        cacheNote: "当前显示的是这个浏览器最近缓存的发布数据。",
+        snapshotNote: "当前显示的是内置 release 快照，因为 GitHub 实时数据暂时不可用。",
+      },
+      groups: {
+        primaryLabel: "主要下载",
+        alternatesLabel: "其他安装包",
+        advancedLabel: "高级下载",
+      },
+      advancedDownloadsLabel: "高级下载",
+    },
+    footer: {
+      body: "人来主导审阅，AI 负责执行修复，流程坚持桌面优先。",
     },
   },
 } as const;

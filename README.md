@@ -2,6 +2,8 @@
 
 `review-editor` now ships with a desktop GUI (`Tauri + React + TypeScript`) backed by a Rust review engine.
 
+The repository also includes a standalone marketing site in `apps/site` for the Signal Desk launch surface.
+
 The current desktop shell includes:
 
 - native macOS product menus
@@ -41,11 +43,27 @@ npm install
 npm run tauri dev
 ```
 
+Site dev:
+
+```bash
+cd apps/site
+npm install
+npm run dev
+```
+
 Desktop build:
 
 ```bash
 cd apps/desktop
 npm run tauri build
+```
+
+Site verification:
+
+```bash
+cd apps/site
+npm run test:site
+npm run build
 ```
 
 Note:

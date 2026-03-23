@@ -8,7 +8,7 @@ function SiteShell({ children, locale }: PropsWithChildren<{ locale: Locale }>) 
     <div className="site-shell">
       <Header locale={locale} />
       {children}
-      <Footer />
+      <Footer locale={locale} />
     </div>
   );
 }
