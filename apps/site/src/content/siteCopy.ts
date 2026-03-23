@@ -16,8 +16,10 @@ export const siteCopy = {
         secondary: "See the workflow",
       },
       preview: {
-        title: "Review queue, diff view, and AI dispatch in one desktop surface.",
-        body: "Built for reviewers who want explicit issues, direct AI execution, and a final human pass before merge.",
+        title: "The review queue stays beside the diff.",
+        body: "Capture issues, dispatch concrete fixes to AI, and review the result again before merge.",
+        imageAlt:
+          "Review Editor desktop app showing a commit list, document diff, and review queue in one workspace.",
       },
       workflow: {
         title: "A disciplined loop for AI-native code review.",
@@ -119,8 +121,9 @@ export const siteCopy = {
         secondary: "查看工作流",
       },
       preview: {
-        title: "把 review queue、diff 视图和 AI 派发放进同一个桌面工作台。",
-        body: "适合需要显式问题项、直接 AI 执行，以及合并前最终人工复审的团队。",
+        title: "review 队列就放在 diff 旁边。",
+        body: "在同一个桌面工作台里记录问题、派发明确修复给 AI，并在合并前再复审一次。",
+        imageAlt: "Review Editor 桌面应用界面，展示提交列表、文档差异和 review 队列。",
       },
       workflow: {
         title: "面向 AI 原生工程团队的审阅闭环。",

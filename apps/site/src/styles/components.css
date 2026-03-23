@@ -59,14 +59,14 @@
 }
 
 .artifact-card {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
+  display: grid;
+  gap: 16px;
+  align-content: start;
   min-height: 100%;
   background:
-    linear-gradient(180deg, rgba(178, 57, 40, 0.08), transparent 35%),
-    linear-gradient(135deg, #201b18, #3a2a24);
-  color: #f8efe4;
+    radial-gradient(circle at top right, rgba(178, 57, 40, 0.08), transparent 32%),
+    linear-gradient(180deg, #fffdf8, #f7edde 65%, #f2e2ca);
+  color: var(--ink);
 }
 
 .eyebrow,
@@ -83,7 +83,6 @@
 }
 
 .hero-card h1,
-.artifact-card h2,
 .workflow-strip h2,
 .editorial-section h2,
 .cta-band h2 {
@@ -95,7 +94,6 @@
 .workflow-strip h2,
 .editorial-section h2,
 .cta-band h2,
-.artifact-card h2,
 .platform-card h2,
 .release-meta-panel h2,
 .download-state-panel h2 {
@@ -117,8 +115,74 @@
   margin-top: 20px;
 }
 
-.artifact-card .lede {
-  color: rgba(248, 239, 228, 0.82);
+.artifact-window {
+  overflow: hidden;
+  border: 1px solid rgba(23, 20, 18, 0.14);
+  border-radius: 20px;
+  background: rgba(255, 252, 247, 0.96);
+  box-shadow:
+    0 26px 60px rgba(23, 20, 18, 0.18),
+    0 1px 0 rgba(255, 255, 255, 0.72) inset;
+}
+
+.artifact-window-chrome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(23, 20, 18, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(244, 234, 219, 0.95));
+}
+
+.artifact-window-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.artifact-window-dot-red {
+  background: #ec6b5f;
+}
+
+.artifact-window-dot-amber {
+  background: #f4bf4f;
+}
+
+.artifact-window-dot-green {
+  background: #61c554;
+}
+
+.artifact-window-shot {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1214 / 768;
+  object-fit: cover;
+  object-position: center top;
+  background: #121212;
+}
+
+.artifact-caption {
+  display: grid;
+  gap: 6px;
+}
+
+.artifact-caption-title,
+.artifact-caption-body {
+  margin: 0;
+  font-family: "Manrope", "Helvetica Neue", sans-serif;
+}
+
+.artifact-caption-title {
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.artifact-caption-body {
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .workflow-steps {

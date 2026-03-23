@@ -3,6 +3,7 @@ import SiteShell from "../components/SiteShell";
 import WorkflowStrip from "../components/WorkflowStrip";
 import WhyItWorksSection from "../components/WhyItWorksSection";
 import AiClientsSection from "../components/AiClientsSection";
+import reviewEditorShot from "../assets/review-editor-shot.png";
 import { siteCopy } from "../content/siteCopy";
 import type { Locale } from "../lib/locale";
 import { buildLocalePath } from "../lib/routes";
@@ -32,8 +33,22 @@ function HomePage({ locale }: { locale: Locale }) {
           </article>
           <aside className="artifact-card" aria-label={copy.labels.desktopPreview}>
             <p className="section-label">{copy.labels.desktopPreview}</p>
-            <h2>{copy.preview.title}</h2>
-            <p className="lede">{copy.preview.body}</p>
+            <div className="artifact-window">
+              <div className="artifact-window-chrome" aria-hidden="true">
+                <span className="artifact-window-dot artifact-window-dot-red" />
+                <span className="artifact-window-dot artifact-window-dot-amber" />
+                <span className="artifact-window-dot artifact-window-dot-green" />
+              </div>
+              <img
+                className="artifact-window-shot"
+                src={reviewEditorShot}
+                alt={copy.preview.imageAlt}
+              />
+            </div>
+            <div className="artifact-caption">
+              <p className="artifact-caption-title">{copy.preview.title}</p>
+              <p className="artifact-caption-body">{copy.preview.body}</p>
+            </div>
           </aside>
         </section>
         <WorkflowStrip locale={locale} />

@@ -21,6 +21,11 @@ test("home copy names supported AI clients", () => {
   assert.deepEqual(siteCopy.en.home.aiClients, ["Codex", "Claude", "Gemini"]);
 });
 
+test("home preview defines screenshot alt text for both locales", () => {
+  assert.ok(siteCopy.en.home.preview.imageAlt.length > 0);
+  assert.ok(siteCopy.zh.home.preview.imageAlt.length > 0);
+});
+
 test("download copy defines macOS, Windows, and Linux labels in both locales", () => {
   assert.equal(siteCopy.en.download.platforms.length, 3);
   assert.equal(siteCopy.zh.download.platforms.length, 3);

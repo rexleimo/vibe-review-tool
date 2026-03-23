@@ -10,5 +10,9 @@ const packageJsonPath = path.join(__dirname, "..", "package.json");
 test("site scaffold package metadata exists", () => {
   const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
   assert.equal(packageJson.name, "signal-desk-site");
-  assert.equal(packageJson.scripts.build, "tsc && vite build");
+  assert.equal(
+    packageJson.scripts.build,
+    "tsc && vite build && node scripts/export-static-routes.mjs",
+  );
+  assert.equal(packageJson.scripts["build:pages"], "npm run build");
 });
